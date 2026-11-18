@@ -86,11 +86,18 @@ fun UpdateDialog(
                             color = Color(0xFF3B82F6),
                             trackColor = Color(0x40FFFFFF)
                         )
+                        val percent = (state.progress * 100).toInt()
+                        val speed = state.speedKbps
                         Text(
-                            text = stringResource(
-                                R.string.update_downloading,
-                                (state.progress * 100).toInt()
-                            ),
+                            text = if (speed > 0f) {
+                                stringResource(
+                                    R.string.update_downloading_speed,
+                                    percent,
+                                    formatSpeed(speed)
+                                )
+                            } else {
+                                stringResource(R.string.update_downloading, percent)
+                            },
                             fontSize = 13.sp,
                             color = Color.White.copy(alpha = 0.6f)
                         )
@@ -159,3 +166,8 @@ fun UpdateDialog(
         }
     )
 }
+
+/** 速度显示：>=1024 KB/s 用 MB/s */
+private fun formatSpeed(kbps: Float): String =
+    if (kbps >= 1024f) String.format("%.1f MB/s", kbps / 1024f)
+    else String.format("%d KB/s", kbps.toInt())

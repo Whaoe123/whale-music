@@ -10,6 +10,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -56,6 +57,12 @@ class UpdateRepository @Inject constructor(
     private val prefs by lazy {
         context.getSharedPreferences("whale_update", Context.MODE_PRIVATE)
     }
+
+    /** 当前安装包的版本说明，如 "Whale 1.11（版本号 21）" */
+    fun localVersionLabel(): String = runCatching {
+        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+        "${pi.versionName}（版本号 ${currentVersionCode()}）"
+    }.getOrDefault("未知版本")
 
     /** 当前安装包的 versionCode */
     fun currentVersionCode(): Int = runCatching {
@@ -110,40 +117,120 @@ class UpdateRepository @Inject constructor(
     }
 
     /**
-     * 下载 APK 到应用缓存目录，边下边报进度，完成后校验 sha256。
-     * 校验失败会删掉文件并抛异常，绝不把坏包交给安装器。
+     * 下载 APK 到应用缓存目录，边下边报进度（含速度），完成后校验 sha256。
+     *
+     * 慢网络对策：
+     * 1. 多个下载源依次尝试（GitHub 直连 → 公共加速前缀），换源时**断点续传**不重下；
+     * 2. 支持 Range 续传，网络闪断后从已有字节继续；
+     * 3. 128KB 大缓冲 + 速度统计。
+     * 无论走哪个源，最后都按 update.json 里的 sha256 校验，被篡改一律拒装。
+     *
+     * @param onProgress (0..1 进度, 速度 KB/s)
      */
-    fun download(info: UpdateInfo, onProgress: (Float) -> Unit): File {
+    fun download(info: UpdateInfo, onProgress: (Float, Float) -> Unit): File {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val target = File(dir, "whale-update.apk")
-        if (target.exists()) target.delete()
 
-        val conn = URL(info.url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 10_000
+        val sources = buildList {
+            add(info.url)
+            if (info.url.startsWith("https://github.com/")) {
+                // 公共加速前缀（国内到 GitHub 直连常见几十 KB/s）
+                add("https://ghfast.top/" + info.url)
+                add("https://ghproxy.net/" + info.url)
+                add("https://gh-proxy.com/" + info.url)
+            }
+        }
+
+        var lastError: Exception? = null
+        for (src in sources) {
+            try {
+                return downloadFrom(src, target, onProgress)
+            } catch (e: Exception) {
+                lastError = e
+                android.util.Log.w("UpdateRepo", "下载源失败，换下一个: $src → ${e.message}")
+                // 文件不完整/校验不过 → 丢掉残段，避免把坏数据带到下一个源
+                if (target.exists() && !isResumable(target, info)) target.delete()
+            }
+        }
+        throw lastError ?: IllegalStateException("下载失败")
+    }
+
+    /** 残段是否还能续（大小不超过预期） */
+    private fun isResumable(file: File, info: UpdateInfo): Boolean = file.exists() && file.length() in 1..(1024L * 1024 * 300)
+
+    private fun downloadFrom(url: String, target: File, onProgress: (Float, Float) -> Unit): File {
+        val existing = if (target.exists()) target.length() else 0L
+
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
         conn.readTimeout = 30_000
         conn.setRequestProperty("User-Agent", "Whale-Updater")
         conn.instanceFollowRedirects = true
+        if (existing > 0) conn.setRequestProperty("Range", "bytes=$existing-")
 
-        val total: Long
+        val code = conn.responseCode
+        val resumed = code == 206 && existing > 0
+        if (code !in 200..299) {
+            conn.disconnect()
+            error("HTTP $code")
+        }
+
+        val contentLen = conn.contentLength.toLong()
+        val total = (if (resumed) existing + contentLen else contentLen).coerceAtLeast(0L)
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        var done = 0L
         try {
-            if (conn.responseCode != 200) error("HTTP ${conn.responseCode}")
-            total = conn.contentLength.toLong().coerceAtLeast(0L)
-            val digest = MessageDigest.getInstance("SHA-256")
-            var done = 0L
+            // 续传前先把已有字节喂进摘要
+            if (resumed && existing > 0) {
+                FileInputStream(target).use { input ->
+                    val buf = ByteArray(128 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        digest.update(buf, 0, n)
+                    }
+                }
+                done = existing
+            }
+
+            var windowStart = System.nanoTime()
+            var windowBytes = 0L
+            val baseDone = done          // 续传进来的字节不算"这一段的速度"
+            val loopStart = System.nanoTime()
+
             conn.inputStream.use { input ->
-                target.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
+                FileOutputStream(target, resumed).use { out ->
+                    val buf = ByteArray(128 * 1024)
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
                         digest.update(buf, 0, n)
                         done += n
-                        if (total > 0) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
+                        windowBytes += n
+
+                        val now = System.nanoTime()
+                        // 慢就换源：3 秒后平均速度仍低于 120KB/s，抛出去让上层切下一个源（已下字节保留续传）
+                        val secs = (now - loopStart) / 1_000_000_000.0
+                        if (secs > 3.0 && (done - baseDone) / secs < 120 * 1024) {
+                            error("速度过慢（${((done - baseDone) / secs / 1024).toInt()} KB/s），换源")
+                        }
+
+                        val elapsed = now - windowStart
+                        var speedKbps = 0f
+                        if (elapsed >= 500_000_000L) {          // 每 0.5s 算一次速度
+                            speedKbps = windowBytes * 1000f / (elapsed / 1_000_000f) / 1024f
+                            windowStart = now
+                            windowBytes = 0L
+                        }
+                        if (total > 0) {
+                            onProgress((done.toFloat() / total).coerceIn(0f, 1f), speedKbps)
+                        }
                     }
                 }
             }
-            onProgress(1f)
+            onProgress(1f, 0f)
 
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
             val expected = info.sha256.trim().lowercase()

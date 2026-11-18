@@ -36,15 +36,18 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -146,6 +149,10 @@ fun PlayerScreen(
     var showLyrics by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
+    // 右上角设置弹窗（当前版本号 + 检测更新）
+    var showSettings by remember { mutableStateOf(false) }
+    val updateVm: com.whale.music.update.UpdateViewModel = hiltViewModel()
+    val updateState by updateVm.state.collectAsState()
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
     var lyrics by remember { mutableStateOf<List<com.whale.music.data.remote.LyricLine>>(emptyList()) }
     var lyricsLoading by remember { mutableStateOf(false) }
@@ -223,6 +230,19 @@ fun PlayerScreen(
                     color = Color.White.copy(alpha = 0.45f)
                 )
                 Spacer(Modifier.weight(1f))
+                // 设置（版本号 / 检测更新）
+                PressableIconButton(
+                    onClick = { showSettings = true },
+                    buttonSize = 44.dp,
+                    baseAlpha = 0f
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "设置",
+                        tint = Color.White.copy(alpha = 0.7f),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
                 Box {
                     PressableIconButton(
                         onClick = { moreMenu = true },
@@ -251,6 +271,93 @@ fun PlayerScreen(
                         )
                     }
                 }
+            }
+
+            // ── 设置弹窗：当前版本号 + 检测更新 ──
+            var checkingFromSettings by remember { mutableStateOf(false) }
+            LaunchedEffect(updateState) {
+                if (checkingFromSettings) {
+                    when (updateState) {
+                        is com.whale.music.update.UpdateViewModel.State.Available -> {
+                            showSettings = false
+                            checkingFromSettings = false
+                        }
+                        is com.whale.music.update.UpdateViewModel.State.UpToDate,
+                        is com.whale.music.update.UpdateViewModel.State.Failed,
+                        is com.whale.music.update.UpdateViewModel.State.Downloading,
+                        is com.whale.music.update.UpdateViewModel.State.Ready -> checkingFromSettings = false
+
+                        else -> Unit // Idle / Checking：还在跑，继续等
+                    }
+                }
+            }
+            if (showSettings) {
+                val status = when (val s = updateState) {
+                    is com.whale.music.update.UpdateViewModel.State.Idle -> "尚未检查"
+                    is com.whale.music.update.UpdateViewModel.State.Checking -> "正在检查更新…"
+                    is com.whale.music.update.UpdateViewModel.State.UpToDate -> "已是最新版本"
+                    is com.whale.music.update.UpdateViewModel.State.Available ->
+                        "发现新版本 ${s.info.versionName}（${s.info.versionCode}）"
+
+                    is com.whale.music.update.UpdateViewModel.State.Downloading ->
+                        "下载中 ${(s.progress * 100).toInt()}%"
+
+                    is com.whale.music.update.UpdateViewModel.State.Ready -> "已下载完成，点「立即更新」安装"
+                    is com.whale.music.update.UpdateViewModel.State.Failed -> "失败：${s.message}"
+                }
+                AlertDialog(
+                    onDismissRequest = { showSettings = false },
+                    containerColor = Color(0xFF1C1C1E),
+                    titleContentColor = Color.White,
+                    textContentColor = Color.White.copy(alpha = 0.75f),
+                    title = {
+                        Text(
+                            "设置",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                "当前版本",
+                                fontSize = 12.sp,
+                                color = Color.White.copy(alpha = 0.45f)
+                            )
+                            Text(
+                                updateVm.localVersionLabel(),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White
+                            )
+                            Text(
+                                "更新状态",
+                                fontSize = 12.sp,
+                                color = Color.White.copy(alpha = 0.45f)
+                            )
+                            Text(
+                                status,
+                                fontSize = 13.sp,
+                                color = Color(0xFF60A5FA),
+                                lineHeight = 19.sp
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            checkingFromSettings = true
+                            updateVm.checkNow()
+                        }) {
+                            Text("检测更新", color = Color(0xFF60A5FA), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showSettings = false }) {
+                            Text("关闭", color = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                )
             }
 
             // 封面 / 歌词（点击切换；上下滑切歌）

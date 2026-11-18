@@ -31,6 +31,26 @@ object NcmHttp {
         form: String? = null,
         session: NcmSession? = null
     ): JSONObject {
+        val (code, body) = fetchBody(url, cookie, method, form, session)
+        if (body.isEmpty()) return JSONObject().put("code", code)
+        return try {
+            JSONObject(body)
+        } catch (e: Exception) {
+            // 非 JSON（如重定向页）→ 用 HTTP 状态码占位，交由上层按「未知响应」处理
+            JSONObject().put("code", code)
+        }
+    }
+
+    /** 只要原始文本（网页版歌单页兜底用） */
+    fun rawGet(url: String, cookie: String): String = fetchBody(url, cookie, "GET", null, null).second
+
+    private fun fetchBody(
+        url: String,
+        cookie: String,
+        method: String,
+        form: String?,
+        session: NcmSession?
+    ): Pair<Int, String> {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = TIMEOUT
@@ -64,16 +84,10 @@ object NcmHttp {
         conn.disconnect()
         android.util.Log.d(
             "NcmHttp",
-            "HTTP $code ${method} ${url.substringAfter("music.163.com")} " +
+            "HTTP $code $method ${url.substringAfter("music.163.com")} " +
                 "cookie=${cookie.count { it == '=' }}个 body=${body.take(100)}"
         )
-        if (body.isEmpty()) return JSONObject().put("code", code)
-        return try {
-            JSONObject(body)
-        } catch (e: Exception) {
-            // 非 JSON（如重定向页）→ 用 HTTP 状态码占位，交由上层按「未知响应」处理
-            JSONObject().put("code", code)
-        }
+        return code to body
     }
 
     fun get(url: String, cookie: String, session: NcmSession? = null): JSONObject =
@@ -194,14 +208,18 @@ object NcmApi {
         val trackIdsCount: Int = 0,
         val tracksCount: Int = 0,
         val filled: Int = 0,
+        val expected: Int = 0,
         val attempts: Int = 1
     ) {
         /** 接口没给到详情的曲数（版权/风控等），用于提示用户，不静默吞掉 */
         val missing: Int get() = (requested - songs.size).coerceAtLeast(0)
 
-        /** 给用户看的诊断行：清单多少 / 返回多少 / 补齐多少 / 最终多少 */
-        fun diagnostics(): String =
-            "清单 $trackIdsCount · 返回 $tracksCount · 补齐 $filled · 最终 ${songs.size}（请求 $attempts 次）"
+        /** 给用户看的诊断行：歌单应有多少 / 清单多少 / 详情多少 / 最终多少 */
+        fun diagnostics(): String = buildString {
+            if (expected > 0) append("歌单 $expected · ")
+            append("清单 $trackIdsCount · 详情 $tracksCount · 补齐 $filled · 最终 ${songs.size}")
+            append("（请求 $attempts 次）")
+        }
     }
 
     suspend fun likedSongsDetailed(session: NcmSession, uid: Long): LikedFetch {
@@ -209,10 +227,11 @@ object NcmApi {
 
         val byId = LinkedHashMap<Long, NcmSongDto>()
         val orderedIds = LinkedHashSet<Long>()
+        var expected = 0
         var lastSize = -1
         var attempts = 0
 
-        // v6 可能被风控随机截断：连打几次取并集，直到不再有新 id
+        // ① v6 可能被风控随机截断：连打几次取并集，直到不再有新 id
         for (attempt in 0 until 3) {
             attempts = attempt + 1
             runCatching {
@@ -221,6 +240,8 @@ object NcmApi {
                     session.cookieHeader()
                 )
                 val pl = json.optJSONObject("playlist") ?: return@runCatching
+                val tc = pl.optInt("trackCount", 0)
+                if (tc > expected) expected = tc
                 pl.optJSONArray("tracks")?.let { arr ->
                     for (i in 0 until arr.length()) {
                         arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
@@ -238,17 +259,28 @@ object NcmApi {
             if (attempt < 2) delay(700L)
         }
 
-        if (orderedIds.isEmpty()) {
-            orderedIds.addAll(byId.keys)
+        // ② 网页版兜底：API 还是不全（或压根没给）时，从歌单页 HTML 抓 id + 歌名
+        //    —— HTML 里的顺序就是歌单顺序，且不受接口截断影响
+        var htmlTitles: Map<Long, String> = emptyMap()
+        if (orderedIds.isEmpty() || (expected > 0 && orderedIds.size < expected)) {
+            htmlTitles = fetchPlaylistHtml(session, playlistId)
+            if (htmlTitles.size > orderedIds.size) {
+                orderedIds.clear()
+                orderedIds.addAll(htmlTitles.keys)
+            } else {
+                htmlTitles.keys.forEach { if (!orderedIds.contains(it)) orderedIds.add(it) }
+            }
         }
-        if (orderedIds.isEmpty()) return LikedFetch(emptyList(), 0, attempts = attempts)
 
-        // 补齐缺失详情（v6 tracks 被截断的那部分）
+        if (orderedIds.isEmpty()) orderedIds.addAll(byId.keys)
+        if (orderedIds.isEmpty()) return LikedFetch(emptyList(), 0, expected = expected, attempts = attempts)
+
+        // ③ 补齐缺失详情（按 id 批量取，带重试）
         val beforeFill = byId.size
         fillDetails(session, orderedIds, byId)
         val filled = byId.size - beforeFill
 
-        // 还缺 → 再打一次 v6（可能上一次被截断）+ 再补一次详情
+        // ④ 还缺 → 再打一次 v6（可能上一次被截断）+ 再补一次详情
         if (orderedIds.any { !byId.containsKey(it) }) {
             runCatching {
                 val json = NcmHttp.get(
@@ -272,15 +304,58 @@ object NcmApi {
             fillDetails(session, orderedIds, byId)
         }
 
+        // ⑤ 最后兜底：有网页版歌名、但接口死活不给详情的 → 用歌名先建条目，
+        //    播放时会按歌名+歌手去酷我匹配（RemoteMusicController.convertByName）
+        var fromHtml = 0
+        for (id in orderedIds) {
+            if (byId.containsKey(id)) continue
+            val title = htmlTitles[id] ?: continue
+            byId[id] = NcmSongDto(
+                id = id,
+                title = title,
+                artist = "未知歌手",
+                album = "",
+                albumId = 0L,
+                durationMs = 0L,
+                coverUrl = null,
+                fee = 0
+            )
+            fromHtml++
+        }
+
         val songs = orderedIds.mapNotNull { byId[it] }.ifEmpty { byId.values.toList() }
         return LikedFetch(
             songs = songs,
             requested = orderedIds.size.coerceAtLeast(songs.size),
             trackIdsCount = orderedIds.size,
             tracksCount = byId.size,
-            filled = filled,
+            filled = filled + fromHtml,
+            expected = expected,
             attempts = attempts
         )
+    }
+
+    /**
+     * 网页版歌单页兜底：抓 `href="/song?id=xxx">歌名` 列表（id → 歌名）。
+     * 需要登录 Cookie 才能看到红心歌单；HTML 结构由服务端渲染，不受 JSON 接口截断影响。
+     */
+    private fun fetchPlaylistHtml(session: NcmSession, playlistId: Long): Map<Long, String> {
+        val out = LinkedHashMap<Long, String>()
+        runCatching {
+            val html = NcmHttp.rawGet("$BASE/playlist?id=$playlistId", session.cookieHeader())
+            if (html.length < 500) return out
+            val re = Regex("""<a[^>]+href="/song\?id=(\d+)"[^>]*>([^<]{1,120})</a>""")
+            for (m in re.findAll(html)) {
+                val id = m.groupValues[1].toLongOrNull() ?: continue
+                val title = m.groupValues[2]
+                    .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                    .replace("&#39;", "'").replace("&quot;", "\"")
+                    .trim()
+                if (id > 0 && title.isNotEmpty() && !out.containsKey(id)) out[id] = title
+            }
+            android.util.Log.d("NcmApi", "网页版兜底：抓到 ${out.size} 首（歌单 $playlistId）")
+        }
+        return out
     }
 
     /** 把 orderedIds 里还没有详情的批量补上 */

@@ -28,7 +28,7 @@ class UpdateViewModel @Inject constructor(
         data object Checking : State
         data object UpToDate : State
         data class Available(val info: UpdateInfo) : State
-        data class Downloading(val info: UpdateInfo, val progress: Float) : State
+        data class Downloading(val info: UpdateInfo, val progress: Float, val speedKbps: Float = 0f) : State
         data class Ready(val info: UpdateInfo, val file: File) : State
         data class Failed(val message: String, val info: UpdateInfo) : State
     }
@@ -69,6 +69,23 @@ class UpdateViewModel @Inject constructor(
         _note.value = null
     }
 
+    /** 设置页「检测更新」用：强制重新检查一次（忽略上次结果与节流） */
+    fun checkNow() {
+        checking = false
+        _state.value = State.Idle
+        _note.value = null
+        check()
+    }
+
+    /** 设置页展示用：当前版本号 */
+    fun localVersionLabel(): String = repo.localVersionLabel()
+
+    /** 服务器上的最新版本（已检查过才有值），设置页对照显示 */
+    fun remoteVersionLabel(): String? = when (val s = _state.value) {
+        is State.Available -> "${s.info.versionName}（版本号 ${s.info.versionCode}）"
+        else -> null
+    }
+
     /** 「以后再说」：本版本不再提示；同时放开检查，下次启动还能重新查 */
     fun dismiss() {
         val s = _state.value
@@ -89,8 +106,8 @@ class UpdateViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val file = withContext(Dispatchers.IO) {
-                    repo.download(info) { p ->
-                        _state.value = State.Downloading(info, p)
+                    repo.download(info) { p, speed ->
+                        _state.value = State.Downloading(info, p, speed)
                     }
                 }
                 _state.value = State.Ready(info, file)
