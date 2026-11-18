@@ -1,7 +1,7 @@
 {
-  "versionCode": 8,
-  "versionName": "Whale 1.7",
-  "url": "https://github.com/Whaoe123/whale-music/releases/latest/download/whale-music.apk",
-  "sha256": "",
-  "changelog": "本地构建版本；发版后由 Release 工作流自动覆盖本文件。"
+  "versionCode": 9,
+  "versionName": "Whale 1.8",
+  "url": "https://github.com/Whaoe123/whale-music/releases/download/v1.8/whale-music-1.8.apk",
+  "sha256": "dbb7bb6d60147d015e27b95cf3427c3b28f08b8ce7128d8efb66bbe321f6985b",
+  "changelog": "Whale 1.8"
 }
