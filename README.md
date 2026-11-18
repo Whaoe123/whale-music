@@ -143,6 +143,7 @@ Compose UI -> ViewModel -> MusicRepository -> Room / MediaStore
 - [架构说明](docs/ARCHITECTURE.md)
 - [设备兼容性](docs/DEVICE_COMPATIBILITY.md)
 - [发版与应用内更新](docs/RELEASE.md)
+- [交接文档（给接手的人 / AI）](HANDOFF.md)
 - [隐私政策](PRIVACY.md)
 - [更新记录](CHANGELOG.md)
 
