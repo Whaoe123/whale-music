@@ -30,7 +30,7 @@ class UpdateViewModel @Inject constructor(
         data class Available(val info: UpdateInfo) : State
         data class Downloading(val info: UpdateInfo, val progress: Float) : State
         data class Ready(val info: UpdateInfo, val file: File) : State
-        data class Failed(val message: String, val info: UpdateInfo?) : State
+        data class Failed(val message: String, val info: UpdateInfo) : State
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
