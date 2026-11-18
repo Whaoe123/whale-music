@@ -144,7 +144,7 @@ class UpdateRepository @Inject constructor(
         var lastError: Exception? = null
         for (src in sources) {
             try {
-                return downloadFrom(src, target, onProgress)
+                return downloadFrom(src, target, info, onProgress)
             } catch (e: Exception) {
                 lastError = e
                 android.util.Log.w("UpdateRepo", "下载源失败，换下一个: $src → ${e.message}")
@@ -158,7 +158,7 @@ class UpdateRepository @Inject constructor(
     /** 残段是否还能续（大小不超过预期） */
     private fun isResumable(file: File, info: UpdateInfo): Boolean = file.exists() && file.length() in 1..(1024L * 1024 * 300)
 
-    private fun downloadFrom(url: String, target: File, onProgress: (Float, Float) -> Unit): File {
+    private fun downloadFrom(url: String, target: File, info: UpdateInfo, onProgress: (Float, Float) -> Unit): File {
         val existing = if (target.exists()) target.length() else 0L
 
         val conn = URL(url).openConnection() as HttpURLConnection
