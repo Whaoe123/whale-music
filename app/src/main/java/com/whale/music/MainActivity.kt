@@ -127,10 +127,11 @@ class MainActivity : ComponentActivity() {
                     updateVm.check()
                 }
                 // 检查结果（失败原因 / 版本对照）用 Toast 说一声，避免"看着像没在更新"
+                val updateToastContext = androidx.compose.ui.platform.LocalContext.current
                 LaunchedEffect(updateNote) {
                     updateNote?.let { msg ->
                         android.widget.Toast.makeText(
-                            androidx.compose.ui.platform.LocalContext.current,
+                            updateToastContext,
                             msg,
                             android.widget.Toast.LENGTH_LONG
                         ).show()
