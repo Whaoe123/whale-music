@@ -286,7 +286,7 @@ object NcmApi {
     /** 把 orderedIds 里还没有详情的批量补上 */
     private suspend fun fillDetails(
         session: NcmSession,
-        orderedIds: List<Long>,
+        orderedIds: Collection<Long>,
         byId: MutableMap<Long, NcmSongDto>
     ) {
         val missing = orderedIds.filter { !byId.containsKey(it) }
