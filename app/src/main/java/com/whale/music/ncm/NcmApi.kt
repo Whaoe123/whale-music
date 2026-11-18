@@ -188,54 +188,99 @@ object NcmApi {
         likedSongsDetailed(session, uid).songs
 
     /** 红心歌单抓取结果：requested = 应有曲数，songs = 实际拿到的详情 */
-    data class LikedFetch(val songs: List<NcmSongDto>, val requested: Int) {
+    data class LikedFetch(
+        val songs: List<NcmSongDto>,
+        val requested: Int,
+        val trackIdsCount: Int = 0,
+        val tracksCount: Int = 0,
+        val filled: Int = 0,
+        val attempts: Int = 1
+    ) {
         /** 接口没给到详情的曲数（版权/风控等），用于提示用户，不静默吞掉 */
         val missing: Int get() = (requested - songs.size).coerceAtLeast(0)
+
+        /** 给用户看的诊断行：清单多少 / 返回多少 / 补齐多少 / 最终多少 */
+        fun diagnostics(): String =
+            "清单 $trackIdsCount · 返回 $tracksCount · 补齐 $filled · 最终 ${songs.size}（请求 $attempts 次）"
     }
 
     suspend fun likedSongsDetailed(session: NcmSession, uid: Long): LikedFetch {
         val playlistId = likedPlaylistId(session, uid) ?: return LikedFetch(emptyList(), 0)
 
         val byId = LinkedHashMap<Long, NcmSongDto>()
-        val orderedIds = mutableListOf<Long>()
+        val orderedIds = LinkedHashSet<Long>()
+        var lastSize = -1
+        var attempts = 0
 
-        runCatching {
-            val json = NcmHttp.get(
-                "$BASE/api/v6/playlist/detail?id=$playlistId&n=1000",
-                session.cookieHeader()
-            )
-            val pl = json.optJSONObject("playlist") ?: return@runCatching
-            pl.optJSONArray("tracks")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
+        // v6 可能被风控随机截断：连打几次取并集，直到不再有新 id
+        for (attempt in 0 until 3) {
+            attempts = attempt + 1
+            runCatching {
+                val json = NcmHttp.get(
+                    "$BASE/api/v6/playlist/detail?id=$playlistId&n=1000",
+                    session.cookieHeader()
+                )
+                val pl = json.optJSONObject("playlist") ?: return@runCatching
+                pl.optJSONArray("tracks")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
+                    }
+                }
+                pl.optJSONArray("trackIds")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optJSONObject(i)?.optLong("id") ?: continue
+                        if (id > 0) orderedIds.add(id)
+                    }
                 }
             }
-            pl.optJSONArray("trackIds")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    val id = arr.optJSONObject(i)?.optLong("id") ?: continue
-                    if (id > 0) orderedIds += id
-                }
-            }
+            if (orderedIds.size == lastSize) break // 没有新 id 了，说明这次和上次一样全
+            lastSize = orderedIds.size
+            if (attempt < 2) delay(700L)
         }
 
-        // v6 整个没给曲目 → 直接走 v3 全量接口
         if (orderedIds.isEmpty()) {
-            playlistTracksAll(session, playlistId).forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
             orderedIds.addAll(byId.keys)
         }
-        if (orderedIds.isEmpty()) return LikedFetch(emptyList(), 0)
+        if (orderedIds.isEmpty()) return LikedFetch(emptyList(), 0, attempts = attempts)
 
-        // 第一次补齐（v6 tracks 被截断的那部分）
+        // 补齐缺失详情（v6 tracks 被截断的那部分）
+        val beforeFill = byId.size
         fillDetails(session, orderedIds, byId)
+        val filled = byId.size - beforeFill
 
-        // 还缺 → 大概率是 v6 截断 + 补齐被风控，改走 v3 全量再补一次
+        // 还缺 → 再打一次 v6（可能上一次被截断）+ 再补一次详情
         if (orderedIds.any { !byId.containsKey(it) }) {
-            playlistTracksAll(session, playlistId).forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
+            runCatching {
+                val json = NcmHttp.get(
+                    "$BASE/api/v6/playlist/detail?id=$playlistId&n=1000",
+                    session.cookieHeader()
+                )
+                val pl = json.optJSONObject("playlist") ?: return@runCatching
+                pl.optJSONArray("tracks")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
+                    }
+                }
+                pl.optJSONArray("trackIds")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optJSONObject(i)?.optLong("id") ?: continue
+                        if (id > 0) orderedIds.add(id)
+                    }
+                }
+            }
+            attempts++
             fillDetails(session, orderedIds, byId)
         }
 
         val songs = orderedIds.mapNotNull { byId[it] }.ifEmpty { byId.values.toList() }
-        return LikedFetch(songs, orderedIds.size.coerceAtLeast(songs.size))
+        return LikedFetch(
+            songs = songs,
+            requested = orderedIds.size.coerceAtLeast(songs.size),
+            trackIdsCount = orderedIds.size,
+            tracksCount = byId.size,
+            filled = filled,
+            attempts = attempts
+        )
     }
 
     /** 把 orderedIds 里还没有详情的批量补上 */
@@ -247,22 +292,6 @@ object NcmApi {
         val missing = orderedIds.filter { !byId.containsKey(it) }
         if (missing.isEmpty()) return
         songDetails(session, missing).forEach { byId[it.id] = it }
-    }
-
-    /** v3 全量歌单曲目（v6 截断时的备用来源，一次最多 1000 首） */
-    private suspend fun playlistTracksAll(session: NcmSession, playlistId: Long): List<NcmSongDto> {
-        val out = mutableListOf<NcmSongDto>()
-        runCatching {
-            val json = NcmHttp.get(
-                "$BASE/api/v3/playlist/track/all?id=$playlistId&limit=1000&offset=0",
-                session.cookieHeader()
-            )
-            val arr = json.optJSONArray("tracks") ?: json.optJSONArray("songs") ?: return@runCatching
-            for (i in 0 until arr.length()) {
-                arr.optJSONObject(i)?.let { parseSong(it) }?.let { out.add(it) }
-            }
-        }
-        return out
     }
 
     /** 红心歌单 id（specialType=1 或名为「我喜欢的音乐」） */

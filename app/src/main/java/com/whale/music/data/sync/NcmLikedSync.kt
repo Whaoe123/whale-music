@@ -29,7 +29,12 @@ class NcmLikedSync @Inject constructor(
     var lastSyncMs: Long = 0L
         private set
 
-    data class Result(val count: Int, val error: String? = null, val missing: Int = 0) {
+    data class Result(
+        val count: Int,
+        val error: String? = null,
+        val missing: Int = 0,
+        val detail: String = ""
+    ) {
         val ok: Boolean get() = error == null && count > 0
     }
 
@@ -60,7 +65,7 @@ class NcmLikedSync @Inject constructor(
             }
             writeLocked(songs)
             lastSyncMs = System.currentTimeMillis()
-            Result(songs.size, missing = fetch.missing)
+            Result(songs.size, missing = fetch.missing, detail = fetch.diagnostics())
         }
     }
 
