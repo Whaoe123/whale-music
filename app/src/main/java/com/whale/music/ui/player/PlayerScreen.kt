@@ -718,39 +718,39 @@ private fun ProgressArea(viewModel: PlayerViewModel) {
     val currentPosition = uiState.currentPosition
     val duration = uiState.duration
 
-            Canvas(
-                modifier = Modifier.fillMaxWidth().height(24.dp).pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        viewModel.seekTo((down.position.x / size.width).coerceIn(0f, 1f))
-                        down.consume()
-                        drag(down.id) { change ->
-                            viewModel.seekTo((change.position.x / size.width).coerceIn(0f, 1f))
-                            change.consume()
-                        }
-                    }
+    Canvas(
+        modifier = Modifier.fillMaxWidth().height(24.dp).pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                viewModel.seekTo((down.position.x / size.width).coerceIn(0f, 1f))
+                down.consume()
+                drag(down.id) { change ->
+                    viewModel.seekTo((change.position.x / size.width).coerceIn(0f, 1f))
+                    change.consume()
                 }
-            ) {
-                val trackHeight = 3.dp.toPx()
-                val dotRadius = 5.5f.dp.toPx()
-                val y = size.height / 2f
-                val w = size.width
-                val cornerRadius = 1.5.dp.toPx()
-
-                drawRoundRect(
-                    ProgressInactive, Offset(0f, y - trackHeight / 2f),
-                    Size(w, trackHeight), CornerRadius(cornerRadius)
-                )
-                val activeWidth = w * progress
-                drawRoundRect(
-                    ProgressActive, Offset(0f, y - trackHeight / 2f),
-                    Size(activeWidth, trackHeight), CornerRadius(cornerRadius)
-                )
-                drawCircle(ProgressActive, dotRadius, Offset(activeWidth, y))
             }
+        }
+    ) {
+        val trackHeight = 3.dp.toPx()
+        val dotRadius = 5.5f.dp.toPx()
+        val y = size.height / 2f
+        val w = size.width
+        val cornerRadius = 1.5.dp.toPx()
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(currentPosition), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
-                Text(formatTime(duration), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
-            }
+        drawRoundRect(
+            ProgressInactive, Offset(0f, y - trackHeight / 2f),
+            Size(w, trackHeight), CornerRadius(cornerRadius)
+        )
+        val activeWidth = w * progress
+        drawRoundRect(
+            ProgressActive, Offset(0f, y - trackHeight / 2f),
+            Size(activeWidth, trackHeight), CornerRadius(cornerRadius)
+        )
+        drawCircle(ProgressActive, dotRadius, Offset(activeWidth, y))
+    }
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(formatTime(currentPosition), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
+        Text(formatTime(duration), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
+    }
 }

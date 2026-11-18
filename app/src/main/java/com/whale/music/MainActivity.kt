@@ -67,8 +67,11 @@ import com.whale.music.ui.player.PlayerViewModel
 import com.whale.music.ui.playlist.PlaylistScreen
 import com.whale.music.ui.qishui.QishuiHomeScreen
 import com.whale.music.ui.theme.OHMusicTheme
+import com.whale.music.ui.update.UpdateDialog
+import com.whale.music.update.UpdateViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -113,6 +116,15 @@ class MainActivity : ComponentActivity() {
 
                 // 冷启动自动播放（未登录 → 免登录榜单；已登录 → 网易云日推）
                 val startup: StartupViewModel = hiltViewModel()
+
+                // 应用内更新：启动后延迟检查，有新版本才弹窗
+                val updateVm: UpdateViewModel = hiltViewModel()
+                val updateState by updateVm.state.collectAsState()
+                LaunchedEffect(Unit) {
+                    withFrameNanos { }
+                    delay(3_500)
+                    updateVm.check()
+                }
 
                 // 迷你条是否收起成 CD 按钮（下滑收起 / 点击 CD 展开）
                 var miniCollapsed by rememberSaveable { mutableStateOf(false) }
@@ -282,6 +294,21 @@ class MainActivity : ComponentActivity() {
                             .padding(bottom = 28.dp)
                             .zIndex(3f)
                     )
+
+                    // ── 应用内更新弹窗：盖在所有页面之上 ──
+                    when (updateState) {
+                        is UpdateViewModel.State.Available,
+                        is UpdateViewModel.State.Downloading,
+                        is UpdateViewModel.State.Ready,
+                        is UpdateViewModel.State.Failed -> UpdateDialog(
+                            state = updateState,
+                            onDismiss = updateVm::dismiss,
+                            onUpdate = updateVm::download,
+                            onInstall = updateVm::install
+                        )
+
+                        else -> Unit
+                    }
                 }
             }
         }

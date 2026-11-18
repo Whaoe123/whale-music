@@ -72,6 +72,12 @@ Whale 只在获得 Android 授权后读取本地音频文件及其元数据。�
 
 联网仅用于在线音源与账号：搜索、推荐、歌词、歌单导入会请求对应平台的公开接口；网易云 / 抖音登录在 WebView 中完成，登录态保存在本地。应用不包含广告、第三方统计分析 SDK。详细说明见 [PRIVACY.md](PRIVACY.md)。
 
+## 应用内更新
+
+App 启动后会静默检查仓库根目录的 `update.json`：远端 `versionCode` 比本机大就弹出更新提示，
+点「立即更新」后台下载 APK、校验 sha256，再交给系统安装器，全程不需要自建服务器。
+托管只要两个静态文件（`update.json` + Release 里的 APK）。发版流程见 [docs/RELEASE.md](docs/RELEASE.md)。
+
 ## 开发环境
 
 - Android Studio
@@ -136,6 +142,7 @@ Compose UI -> ViewModel -> MusicRepository -> Room / MediaStore
 
 - [架构说明](docs/ARCHITECTURE.md)
 - [设备兼容性](docs/DEVICE_COMPATIBILITY.md)
+- [发版与应用内更新](docs/RELEASE.md)
 - [隐私政策](PRIVACY.md)
 - [更新记录](CHANGELOG.md)
 
