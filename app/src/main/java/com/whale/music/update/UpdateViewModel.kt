@@ -36,6 +36,10 @@ class UpdateViewModel @Inject constructor(
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** 本次检查结果（Toast 用）：失败原因 / 当前与服务器版本对照 */
+    private val _note = MutableStateFlow<String?>(null)
+    val note: StateFlow<String?> = _note.asStateFlow()
+
     private var checking = false
 
     /** 启动后延迟调用一次；重复调用会被忽略 */
@@ -45,17 +49,24 @@ class UpdateViewModel @Inject constructor(
         _state.value = State.Checking
         viewModelScope.launch {
             val info = withContext(Dispatchers.IO) { repo.fetchRemote() }
+            val local = withContext(Dispatchers.IO) { repo.currentVersionCode() }
             if (info == null) {
-                // 检查失败静默收尾：不提示、不报错
+                // 检查失败：不弹窗，但告诉用户一声，避免"以为没在更新"
                 _state.value = State.UpToDate
+                _note.value = "更新检查失败：连不上服务器（本机 $local，已试 3 个源）"
                 return@launch
             }
-            _state.value = if (repo.hasNewVersion(info)) {
-                State.Available(info)
+            if (repo.hasNewVersion(info)) {
+                _state.value = State.Available(info)
             } else {
-                State.UpToDate
+                _state.value = State.UpToDate
+                _note.value = "更新检查完成：已是最新（本机 $local / 服务器 ${info.versionCode}）"
             }
         }
+    }
+
+    fun consumeNote() {
+        _note.value = null
     }
 
     /** 「以后再说」：本版本不再提示；同时放开检查，下次启动还能重新查 */

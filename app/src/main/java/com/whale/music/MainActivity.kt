@@ -120,10 +120,22 @@ class MainActivity : ComponentActivity() {
                 // 应用内更新：启动后延迟检查，有新版本才弹窗
                 val updateVm: UpdateViewModel = hiltViewModel()
                 val updateState by updateVm.state.collectAsState()
+                val updateNote by updateVm.note.collectAsState()
                 LaunchedEffect(Unit) {
                     withFrameNanos { }
                     delay(3_500)
                     updateVm.check()
+                }
+                // 检查结果（失败原因 / 版本对照）用 Toast 说一声，避免"看着像没在更新"
+                LaunchedEffect(updateNote) {
+                    updateNote?.let { msg ->
+                        android.widget.Toast.makeText(
+                            androidx.compose.ui.platform.LocalContext.current,
+                            msg,
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        updateVm.consumeNote()
+                    }
                 }
 
                 // 迷你条是否收起成 CD 按钮（下滑收起 / 点击 CD 展开）

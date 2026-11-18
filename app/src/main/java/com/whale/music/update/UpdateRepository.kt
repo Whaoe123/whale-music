@@ -68,17 +68,30 @@ class UpdateRepository @Inject constructor(
         }
     }.getOrDefault(0)
 
-    /** 拉取 update.json；网络失败 / 解析失败返回 null（静默跳过本次检查） */
-    fun fetchRemote(): UpdateInfo? = runCatching {
-        val conn = URL(UPDATE_JSON_URL).openConnection() as HttpURLConnection
-        conn.connectTimeout = 8_000
-        conn.readTimeout = 15_000
+    /**
+     * 拉取 update.json；按顺序试多个源，每个源试两次。
+     * 网络失败 / 解析失败返回 null（静默跳过本次检查）。
+     */
+    fun fetchRemote(): UpdateInfo? {
+        for (source in UPDATE_SOURCES) {
+            repeat(2) { attempt ->
+                val info = fetchOnce(source)
+                if (info != null) return info
+                if (attempt == 0) runCatching { Thread.sleep(500L) }
+            }
+        }
+        return null
+    }
+
+    private fun fetchOnce(url: String): UpdateInfo? = runCatching {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000   // 国内到 raw.githubusercontent 首次握手可能很慢
+        conn.readTimeout = 20_000
         conn.setRequestProperty("User-Agent", "Whale-Updater")
         try {
             if (conn.responseCode != 200) return null
             conn.inputStream.use { input ->
-                val text = input.readBytes().decodeToString()
-                UpdateInfo.parse(text)
+                UpdateInfo.parse(input.readBytes().decodeToString())
             }
         } finally {
             conn.disconnect()
@@ -189,11 +202,18 @@ class UpdateRepository @Inject constructor(
 
     companion object {
         /**
-         * 版本信息源：仓库根目录的 update.json（raw 地址，CDN 缓存约 5 分钟）。
+         * 版本信息源（按顺序尝试）：仓库根目录的 update.json。
+         * raw.githubusercontent 在国内偶尔慢/不通，jsDelivr 作备用。
          * 改这里可以换成你自己的 OSS / Gitee / Cloudflare 地址。
          */
-        const val UPDATE_JSON_URL =
-            "https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json"
+        val UPDATE_SOURCES = listOf(
+            "https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json",
+            "https://cdn.jsdelivr.net/gh/Whaoe123/whale-music@main/update.json",
+            "https://fastly.jsdelivr.net/gh/Whaoe123/whale-music@main/update.json"
+        )
+
+        /** 兼容旧引用 */
+        const val UPDATE_JSON_URL = "https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json"
 
         private const val KEY_DISMISSED = "dismissed_version_code"
     }
