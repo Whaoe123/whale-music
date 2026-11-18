@@ -180,34 +180,89 @@ object NcmApi {
     /**
      * Fetch every song of the user's liked playlist, in playlist order.
      * trackIds is always complete even when tracks is truncated; missing
-     * details are filled in batches via song/detail.
+     * details are filled in batches via song/detail (with retries), and a
+     * v3 full-track endpoint is used as a fallback so nothing is dropped
+     * silently when the first response is truncated or risk-controlled.
      */
-    suspend fun likedSongs(session: NcmSession, uid: Long): List<NcmSongDto> {
-        val playlistId = likedPlaylistId(session, uid) ?: return emptyList()
-        val json = runCatching {
-            NcmHttp.get("$BASE/api/v6/playlist/detail?id=$playlistId&n=1000", session.cookieHeader())
-        }.getOrNull() ?: return emptyList()
-        val pl = json.optJSONObject("playlist") ?: return emptyList()
+    suspend fun likedSongs(session: NcmSession, uid: Long): List<NcmSongDto> =
+        likedSongsDetailed(session, uid).songs
+
+    /** 红心歌单抓取结果：requested = 应有曲数，songs = 实际拿到的详情 */
+    data class LikedFetch(val songs: List<NcmSongDto>, val requested: Int) {
+        /** 接口没给到详情的曲数（版权/风控等），用于提示用户，不静默吞掉 */
+        val missing: Int get() = (requested - songs.size).coerceAtLeast(0)
+    }
+
+    suspend fun likedSongsDetailed(session: NcmSession, uid: Long): LikedFetch {
+        val playlistId = likedPlaylistId(session, uid) ?: return LikedFetch(emptyList(), 0)
 
         val byId = LinkedHashMap<Long, NcmSongDto>()
-        pl.optJSONArray("tracks")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
-            }
-        }
         val orderedIds = mutableListOf<Long>()
-        pl.optJSONArray("trackIds")?.let { arr ->
-            for (i in 0 until arr.length()) {
-                val id = arr.optJSONObject(i)?.optLong("id") ?: continue
-                if (id > 0) orderedIds += id
+
+        runCatching {
+            val json = NcmHttp.get(
+                "$BASE/api/v6/playlist/detail?id=$playlistId&n=1000",
+                session.cookieHeader()
+            )
+            val pl = json.optJSONObject("playlist") ?: return@runCatching
+            pl.optJSONArray("tracks")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { parseSong(it) }?.let { byId[it.id] = it }
+                }
+            }
+            pl.optJSONArray("trackIds")?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val id = arr.optJSONObject(i)?.optLong("id") ?: continue
+                    if (id > 0) orderedIds += id
+                }
             }
         }
-        if (orderedIds.isEmpty()) orderedIds.addAll(byId.keys)
-        val missing = orderedIds.filter { !byId.containsKey(it) }
-        if (missing.isNotEmpty()) {
-            songDetails(session, missing).forEach { byId[it.id] = it }
+
+        // v6 整个没给曲目 → 直接走 v3 全量接口
+        if (orderedIds.isEmpty()) {
+            playlistTracksAll(session, playlistId).forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
+            orderedIds.addAll(byId.keys)
         }
-        return orderedIds.mapNotNull { byId[it] }.ifEmpty { byId.values.toList() }
+        if (orderedIds.isEmpty()) return LikedFetch(emptyList(), 0)
+
+        // 第一次补齐（v6 tracks 被截断的那部分）
+        fillDetails(session, orderedIds, byId)
+
+        // 还缺 → 大概率是 v6 截断 + 补齐被风控，改走 v3 全量再补一次
+        if (orderedIds.any { !byId.containsKey(it) }) {
+            playlistTracksAll(session, playlistId).forEach { if (!byId.containsKey(it.id)) byId[it.id] = it }
+            fillDetails(session, orderedIds, byId)
+        }
+
+        val songs = orderedIds.mapNotNull { byId[it] }.ifEmpty { byId.values.toList() }
+        return LikedFetch(songs, orderedIds.size.coerceAtLeast(songs.size))
+    }
+
+    /** 把 orderedIds 里还没有详情的批量补上 */
+    private suspend fun fillDetails(
+        session: NcmSession,
+        orderedIds: List<Long>,
+        byId: MutableMap<Long, NcmSongDto>
+    ) {
+        val missing = orderedIds.filter { !byId.containsKey(it) }
+        if (missing.isEmpty()) return
+        songDetails(session, missing).forEach { byId[it.id] = it }
+    }
+
+    /** v3 全量歌单曲目（v6 截断时的备用来源，一次最多 1000 首） */
+    private suspend fun playlistTracksAll(session: NcmSession, playlistId: Long): List<NcmSongDto> {
+        val out = mutableListOf<NcmSongDto>()
+        runCatching {
+            val json = NcmHttp.get(
+                "$BASE/api/v3/playlist/track/all?id=$playlistId&limit=1000&offset=0",
+                session.cookieHeader()
+            )
+            val arr = json.optJSONArray("tracks") ?: json.optJSONArray("songs") ?: return@runCatching
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let { parseSong(it) }?.let { out.add(it) }
+            }
+        }
+        return out
     }
 
     /** 红心歌单 id（specialType=1 或名为「我喜欢的音乐」） */
@@ -254,18 +309,33 @@ object NcmApi {
         return ids
     }
 
-    /** Batch song details (100 per request; larger batches get throttled). */
+    /** Batch song details (100 per request; larger batches get throttled).
+     *  响应必须校验 code + songs 数量，失败退避重试，避免风控时静默丢歌。 */
     suspend fun songDetails(session: NcmSession, ids: List<Long>): List<NcmSongDto> {
         if (ids.isEmpty()) return emptyList()
         val result = mutableListOf<NcmSongDto>()
         ids.chunked(100).forEach { batch ->
-            val json = NcmHttp.get(
-                "$BASE/api/song/detail?ids=" + URLEncoder.encode(JSONArray(batch).toString(), "UTF-8"),
-                session.cookieHeader()
-            )
-            val songs = json.optJSONArray("songs") ?: return@forEach
-            for (i in 0 until songs.length()) {
-                songs.optJSONObject(i)?.let { parseSong(it) }?.let { result.add(it) }
+            var done = false
+            repeat(3) { attempt ->
+                if (done) return@repeat
+                val json = runCatching {
+                    NcmHttp.get(
+                        "$BASE/api/song/detail?ids=" + URLEncoder.encode(JSONArray(batch).toString(), "UTF-8"),
+                        session.cookieHeader()
+                    )
+                }.getOrNull()
+                val songs = json?.optJSONArray("songs")
+                if (json != null && json.optInt("code") == 200 && songs != null && songs.length() > 0) {
+                    for (i in 0 until songs.length()) {
+                        songs.optJSONObject(i)?.let { parseSong(it) }?.let { result.add(it) }
+                    }
+                    done = true
+                } else {
+                    delay(700L * (attempt + 1)) // 被风控 / 空响应：错开重试
+                }
+            }
+            if (!done) {
+                android.util.Log.w("NcmApi", "song/detail 补齐失败：${batch.size} 首取不到详情")
             }
         }
         return result

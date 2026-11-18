@@ -523,6 +523,8 @@ class PlaylistViewModel @Inject constructor(
             try {
                 val r = withContext(Dispatchers.IO) { ncmLikedSync.sync(force = true) }
                 _importMessage.value = when {
+                    r.ok && r.missing > 0 ->
+                        "已同步「${CustomPlaylist.NCM_SYNC_NAME}」${r.count} 首到曲库（另有 ${r.missing} 首接口取不到详情，多为无版权或风控拦截）"
                     r.ok -> "已同步「${CustomPlaylist.NCM_SYNC_NAME}」${r.count} 首到曲库"
                     r.error == "not_logged_in" -> "先在 Whale-网易云 登录，才能同步收藏"
                     r.error == "empty" -> "网易云「我喜欢的音乐」是空的"

@@ -29,7 +29,7 @@ class NcmLikedSync @Inject constructor(
     var lastSyncMs: Long = 0L
         private set
 
-    data class Result(val count: Int, val error: String? = null) {
+    data class Result(val count: Int, val error: String? = null, val missing: Int = 0) {
         val ok: Boolean get() = error == null && count > 0
     }
 
@@ -51,15 +51,16 @@ class NcmLikedSync @Inject constructor(
             if (uid == null) {
                 return@withLock Result(0, "profile_failed")
             }
-            val songs = runCatching { NcmApi.likedSongs(session, uid) }.getOrElse {
+            val fetch = runCatching { NcmApi.likedSongsDetailed(session, uid) }.getOrElse {
                 return@withLock Result(0, "network_failed")
             }
+            val songs = fetch.songs
             if (songs.isEmpty()) {
                 return@withLock Result(0, "empty")
             }
             writeLocked(songs)
             lastSyncMs = System.currentTimeMillis()
-            Result(songs.size)
+            Result(songs.size, missing = fetch.missing)
         }
     }
 
