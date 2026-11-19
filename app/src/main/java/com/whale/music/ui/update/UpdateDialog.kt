@@ -89,14 +89,15 @@ fun UpdateDialog(
                         val percent = (state.progress * 100).toInt()
                         val speed = state.speedKbps
                         Text(
-                            text = if (speed > 0f) {
-                                stringResource(
+                            text = when {
+                                speed > 0f -> stringResource(
                                     R.string.update_downloading_speed,
                                     percent,
                                     formatSpeed(speed)
                                 )
-                            } else {
-                                stringResource(R.string.update_downloading, percent)
+                                // 还没连上第一个下载源：明确告诉用户在连接，而不是干等 0%
+                                state.progress == 0f -> stringResource(R.string.update_connecting)
+                                else -> stringResource(R.string.update_downloading, percent)
                             },
                             fontSize = 13.sp,
                             color = Color.White.copy(alpha = 0.6f)

@@ -53,7 +53,7 @@ class UpdateViewModel @Inject constructor(
             if (info == null) {
                 // 检查失败：不弹窗，但告诉用户一声，避免"以为没在更新"
                 _state.value = State.UpToDate
-                _note.value = "更新检查失败：连不上服务器（本机 $local，已试 3 个源）"
+                _note.value = "更新检查失败：连不上服务器（本机 $local）"
                 return@launch
             }
             if (repo.hasNewVersion(info)) {

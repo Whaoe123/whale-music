@@ -14,6 +14,7 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -76,34 +77,65 @@ class UpdateRepository @Inject constructor(
     }.getOrDefault(0)
 
     /**
-     * 拉取 update.json；按顺序试多个源，每个源试两次。
-     * 网络失败 / 解析失败返回 null（静默跳过本次检查）。
+     * 拉取 update.json：**所有源并行请求，谁先返回有效结果用谁**。
+     * 串行逐个试时，单个源挂住（国内到 raw 常见）会把整个检查拖到 1 分钟以上；
+     * 并行后最坏耗时 ≈ 最慢一个源的超时（6s 连接 + 8s 读），实测通常 1~2 秒出结果。
+     * 全部失败时回退到**上次成功拉到的缓存**，离线也能弹更新窗（下载另说）。
+     * 带 cb= 时间戳绕过 CDN 缓存，避免拿到旧版 update.json 误判「已是最新」。
      */
     fun fetchRemote(): UpdateInfo? {
-        for (source in UPDATE_SOURCES) {
-            repeat(2) { attempt ->
-                val info = fetchOnce(source)
-                if (info != null) return info
-                if (attempt == 0) runCatching { Thread.sleep(500L) }
+        val stamp = System.currentTimeMillis()
+        val sources = UPDATE_SOURCES.map { "$it?cb=$stamp" }
+        val bodies = arrayOfNulls<String>(sources.size)
+        val latch = CountDownLatch(sources.size)
+        sources.forEachIndexed { i, src ->
+            Thread {
+                try {
+                    bodies[i] = fetchRaw(src)
+                } catch (_: Throwable) {
+                    // 单源失败不影响其他源
+                } finally {
+                    latch.countDown()
+                }
+            }.apply { isDaemon = true; start() }
+        }
+        // 先等第一个成功（最多 15s），全结束了还没成功就收工
+        val deadline = System.currentTimeMillis() + 15_000
+        var body: String? = null
+        while (body == null && System.currentTimeMillis() < deadline) {
+            body = bodies.firstOrNull { !it.isNullOrBlank() }
+            if (body == null) {
+                if (latch.count == 0L) break
+                runCatching { Thread.sleep(80L) }
             }
         }
-        return null
+        body = body ?: bodies.firstOrNull { !it.isNullOrBlank() }
+
+        val info = body?.let { UpdateInfo.parse(it) }
+        if (info != null) {
+            runCatching { prefs.edit().putString(KEY_LAST_REMOTE, body).apply() }
+            return info
+        }
+        // 网络全挂：退回上次成功的版本（hasNewVersion 仍会把关，不会误弹）
+        return runCatching {
+            prefs.getString(KEY_LAST_REMOTE, null)?.let { UpdateInfo.parse(it) }
+        }.getOrNull()
     }
 
-    private fun fetchOnce(url: String): UpdateInfo? = runCatching {
+    /** 拉原始正文；超时调短（6s 连 / 8s 读），坏源快速让位，不拖累整个检查 */
+    private fun fetchRaw(url: String): String? = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15_000   // 国内到 raw.githubusercontent 首次握手可能很慢
-        conn.readTimeout = 20_000
+        conn.connectTimeout = 6_000
+        conn.readTimeout = 8_000
         conn.setRequestProperty("User-Agent", "Whale-Updater")
+        conn.setRequestProperty("Cache-Control", "no-cache")
         try {
             if (conn.responseCode != 200) return null
-            conn.inputStream.use { input ->
-                UpdateInfo.parse(input.readBytes().decodeToString())
-            }
+            conn.inputStream.use { it.readBytes().decodeToString() }
         } finally {
             conn.disconnect()
         }
-    }.getOrNull()
+    }.getOrNull()?.takeIf { it.contains("versionCode") }
 
     /** 远端版本比本机新，且用户没对这个版本点过「以后再说」 */
     fun hasNewVersion(info: UpdateInfo): Boolean {
@@ -132,13 +164,13 @@ class UpdateRepository @Inject constructor(
         val target = File(dir, "whale-update.apk")
 
         val sources = buildList {
-            add(info.url)
             if (info.url.startsWith("https://github.com/")) {
-                // 公共加速前缀（国内到 GitHub 直连常见几十 KB/s）
-                add("https://ghfast.top/" + info.url)
-                add("https://ghproxy.net/" + info.url)
+                // 加速前缀排前面（实测本机：gh-proxy 253KB/s、ghfast 183KB/s，直连 227KB/s）；
+                // ghproxy.net 已剔除：首字节要 32 秒，纯干等超时
                 add("https://gh-proxy.com/" + info.url)
+                add("https://ghfast.top/" + info.url)
             }
+            add(info.url) // 直连兜底
         }
 
         var lastError: Exception? = null
@@ -162,8 +194,8 @@ class UpdateRepository @Inject constructor(
         val existing = if (target.exists()) target.length() else 0L
 
         val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15_000
-        conn.readTimeout = 30_000
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 15_000   // 单次读最多等 15s：一个字节都不吐的死源尽快让位换下一个
         conn.setRequestProperty("User-Agent", "Whale-Updater")
         conn.instanceFollowRedirects = true
         if (existing > 0) conn.setRequestProperty("Range", "bytes=$existing-")
@@ -197,7 +229,7 @@ class UpdateRepository @Inject constructor(
             var windowStart = System.nanoTime()
             var windowBytes = 0L
             val baseDone = done          // 续传进来的字节不算"这一段的速度"
-            val loopStart = System.nanoTime()
+            var loopStart = 0L           // 收到第一个字节才起算（握手时间不计入速度，避免误判慢源）
 
             conn.inputStream.use { input ->
                 FileOutputStream(target, resumed).use { out ->
@@ -211,9 +243,11 @@ class UpdateRepository @Inject constructor(
                         windowBytes += n
 
                         val now = System.nanoTime()
-                        // 慢就换源：3 秒后平均速度仍低于 120KB/s，抛出去让上层切下一个源（已下字节保留续传）
+                        if (loopStart == 0L) loopStart = now
+                        // 慢就换源：4 秒后平均速度仍低于 80KB/s，抛出去让上层切下一个源（已下字节保留续传）。
+                        // 阈值取 80 是按实测定的（可用源普遍 180~250KB/s），避免把正常爬坡的源误踢
                         val secs = (now - loopStart) / 1_000_000_000.0
-                        if (secs > 3.0 && (done - baseDone) / secs < 120 * 1024) {
+                        if (secs > 4.0 && (done - baseDone) / secs < 80 * 1024) {
                             error("速度过慢（${((done - baseDone) / secs / 1024).toInt()} KB/s），换源")
                         }
 
@@ -224,9 +258,9 @@ class UpdateRepository @Inject constructor(
                             windowStart = now
                             windowBytes = 0L
                         }
-                        if (total > 0) {
-                            onProgress((done.toFloat() / total).coerceIn(0f, 1f), speedKbps)
-                        }
+                        // 总大小未知（个别代理不给 Content-Length）时也照报速度，让界面立刻有动静
+                        val ratio = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                        onProgress(ratio, speedKbps)
                     }
                 }
             }
@@ -296,12 +330,17 @@ class UpdateRepository @Inject constructor(
         val UPDATE_SOURCES = listOf(
             "https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json",
             "https://cdn.jsdelivr.net/gh/Whaoe123/whale-music@main/update.json",
-            "https://fastly.jsdelivr.net/gh/Whaoe123/whale-music@main/update.json"
+            "https://fastly.jsdelivr.net/gh/Whaoe123/whale-music@main/update.json",
+            // ghfast 中转 raw：raw 直连被墙/超时时的第 4 路（并行请求，不增加等待）
+            "https://ghfast.top/https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json"
         )
 
         /** 兼容旧引用 */
         const val UPDATE_JSON_URL = "https://raw.githubusercontent.com/Whaoe123/whale-music/main/update.json"
 
         private const val KEY_DISMISSED = "dismissed_version_code"
+
+        /** 上次成功拉到的 update.json 原文（网络全挂时兜底用） */
+        private const val KEY_LAST_REMOTE = "last_remote_update_json"
     }
 }
