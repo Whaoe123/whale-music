@@ -129,13 +129,4 @@ object KwSource {
             null
         }
     }
-
-    /** 按「歌名 + 歌手」在酷我重新搜索，返回第一条（米柚的跨源解析套路） */
-    fun convertByName(title: String, artist: String): RemoteSong? {
-        return try {
-            search("$title $artist", pageSize = 5).firstOrNull()
-        } catch (e: Exception) {
-            null
-        }
-    }
 }

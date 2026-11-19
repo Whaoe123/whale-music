@@ -5,9 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.whale.music.data.dao.RemoteSongDao
 import com.whale.music.data.model.RemoteSong
 import com.whale.music.data.model.Song
+import com.whale.music.data.remote.RemoteMusicController
 import com.whale.music.data.repository.MusicRepository
 import com.whale.music.data.sync.LikedCatalog
 import com.whale.music.data.sync.SongKey
+import com.whale.music.ncm.NcmLevel
+import com.whale.music.ncm.NcmSession
 import com.whale.music.player.MusicPlayerManager
 import com.whale.music.player.PlayMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -33,8 +36,24 @@ class PlayerViewModel @Inject constructor(
     private val playerManager: MusicPlayerManager,
     private val repository: MusicRepository,
     private val remoteSongDao: RemoteSongDao,
-    private val likedCatalog: LikedCatalog
+    private val likedCatalog: LikedCatalog,
+    private val ncmSession: NcmSession,
+    private val remoteController: RemoteMusicController
 ) : ViewModel() {
+
+    // ───────── 音质选择（播放页「更多」→ 音质） ─────────
+
+    /** 当前选择；null = 自动（会员无损 / 免费 320k） */
+    fun qualityLevel(): NcmLevel? = ncmSession.qualityLevel()
+
+    /**
+     * 写入选择并**立刻清掉已解析地址与 EAPI 缓存** ——
+     * 不清缓存就会继续播旧档位的地址，选项等于没选。
+     */
+    fun setQualityLevel(level: NcmLevel?) {
+        ncmSession.setQualityLevel(level)
+        remoteController.clearResolvedUrls()
+    }
 
     private data class PlaybackState(
         val song: Song?,
@@ -68,11 +87,15 @@ class PlayerViewModel @Inject constructor(
             currentSong == null -> false
             // 网易云红心只读点亮：按歌名+歌手归一化匹配，不用用户再点一次
             SongKey.variants(currentSong.title, currentSong.artist).any { it in likedKeys } -> true
-            currentSong.albumId == REMOTE_ALBUM_ID ->
-                remoteFavorites.any { it.songId == "kw_${currentSong.id}" }
+            currentSong.albumId == REMOTE_ALBUM_ID || currentSong.albumId == REMOTE_WY_ALBUM_ID ->
+                remoteFavorites.any { it.songId == remoteKeyId(currentSong) }
             else -> songs.firstOrNull { it.id == currentSong.id }?.isFavorite ?: false
         }
     }
+
+    /** 播放中的网络歌 → 在线收藏表主键（按来源建 kw_/wy_ 前缀） */
+    private fun remoteKeyId(song: Song): String =
+        "${if (song.albumId == REMOTE_WY_ALBUM_ID) "wy" else "kw"}_${song.id}"
 
     val uiState: StateFlow<PlayerUiState> = combine(
         playbackState,
@@ -119,15 +142,16 @@ class PlayerViewModel @Inject constructor(
         // 网易云红心是只读真值源：这类歌爱心恒亮，点击不反向回写
         if (SongKey.variants(song.title, song.artist).any { it in likedCatalog.keys.value }) return
         viewModelScope.launch {
-            if (song.albumId == REMOTE_ALBUM_ID) {
-                val songId = "kw_${song.id}"
+            if (song.albumId == REMOTE_ALBUM_ID || song.albumId == REMOTE_WY_ALBUM_ID) {
+                val source = if (song.albumId == REMOTE_WY_ALBUM_ID) "wy" else "kw"
+                val songId = "${source}_${song.id}"
                 if (remoteSongDao.count(songId) > 0) {
                     remoteSongDao.delete(songId)
                 } else {
                     remoteSongDao.insert(
                         RemoteSong(
                             songId = songId,
-                            source = "kw",
+                            source = source,
                             rid = song.id,
                             title = song.title,
                             artist = song.artist,
@@ -144,7 +168,10 @@ class PlayerViewModel @Inject constructor(
     }
 
     companion object {
-        /** RemoteMusicController.toLocalSong 给网络歌的 albumId 标记 */
+        /** RemoteMusicController.toLocalSong 给酷我网络歌的 albumId 标记 */
         const val REMOTE_ALBUM_ID = -1L
+
+        /** RemoteMusicController.toLocalSong 给网易网络歌的 albumId 标记（rid 是网易 id） */
+        const val REMOTE_WY_ALBUM_ID = -2L
     }
 }

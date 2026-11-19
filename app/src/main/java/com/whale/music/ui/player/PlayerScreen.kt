@@ -46,6 +46,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -99,12 +100,15 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.whale.music.R
 import com.whale.music.data.model.Song
+import com.whale.music.ncm.NcmLevel
 import com.whale.music.util.CoverResolver
 import com.whale.music.player.PlayMode
 import com.whale.music.ui.theme.ProgressActive
 import com.whale.music.ui.theme.ProgressInactive
 import com.whale.music.ui.theme.TextPrimary
+import com.whale.music.ui.components.HiResBadge
 import com.whale.music.ui.components.PressableIconButton
+import com.whale.music.ui.components.rememberHiResVisible
 import com.whale.music.util.InteractiveHighlight
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -151,6 +155,20 @@ fun PlayerScreen(
     var showAddSheet by remember { mutableStateOf(false) }
     // 右上角设置弹窗（当前版本号 + 检测更新）
     var showSettings by remember { mutableStateOf(false) }
+    // 音质选择弹窗（更多 → 音质）
+    var showQuality by remember { mutableStateOf(false) }
+    var quality by remember { mutableStateOf(viewModel.qualityLevel()) }
+    /** 音质档位的显示文案；null = 自动 */
+    val qualityLabel: (NcmLevel?) -> String = { lv ->
+        when (lv) {
+            null -> "自动"
+            NcmLevel.STANDARD -> "标准 128k"
+            NcmLevel.HIGHER -> "较高 192k"
+            NcmLevel.EXHIGH -> "极高 320k"
+            NcmLevel.LOSSLESS -> "无损"
+            NcmLevel.HIRES -> "Hi-Res"
+        }
+    }
     val updateVm: com.whale.music.update.UpdateViewModel = hiltViewModel()
     val updateState by updateVm.state.collectAsState()
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
@@ -269,8 +287,68 @@ fun PlayerScreen(
                             text = { Text("切到歌词", fontSize = 13.sp, color = Color.White) },
                             onClick = { moreMenu = false; showLyrics = true }
                         )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "音质：${qualityLabel(quality)}",
+                                    fontSize = 13.sp,
+                                    color = Color.White
+                                )
+                            },
+                            onClick = { moreMenu = false; showQuality = true }
+                        )
                     }
                 }
+            }
+
+            // ── 音质弹窗：选档位 → 真正改接口 level 参数 + 清地址缓存 ──
+            if (showQuality) {
+                // 自动 = 按会员身份推（会员无损 / 免费 320k），其余按所选档位点单
+                val options = listOf<Pair<NcmLevel?, String>>(
+                    null to "自动（会员无损 / 免费 320k）",
+                    NcmLevel.STANDARD to "标准 128k",
+                    NcmLevel.HIGHER to "较高 192k",
+                    NcmLevel.EXHIGH to "极高 320k",
+                    NcmLevel.LOSSLESS to "无损 FLAC",
+                    NcmLevel.HIRES to "Hi-Res"
+                )
+                AlertDialog(
+                    onDismissRequest = { showQuality = false },
+                    containerColor = Color(0xFF242426),
+                    title = { Text("音质", color = Color.White) },
+                    text = {
+                        Column {
+                            options.forEach { (lv, label) ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            quality = lv
+                                            viewModel.setQualityLevel(lv)
+                                            showQuality = false
+                                        }
+                                ) {
+                                    RadioButton(selected = quality == lv, onClick = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(label, color = Color.White, fontSize = 14.sp)
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "选完立即生效：下一首按新档位重新取地址，已下载的文件不变。" +
+                                    "无损 / Hi-Res 需要网易云会员。",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 11.sp
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showQuality = false }) {
+                            Text("关闭", color = Color.White)
+                        }
+                    }
+                )
             }
 
             // ── 设置弹窗：当前版本号 + 检测更新 ──
@@ -394,6 +472,18 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(22.dp))
 
+            // Hi-Res 金标：封面下方、右对齐（参考样式）
+            // 在线歌看 EAPI 实际下发档位，本地歌异步读真实码率（不卡 UI）
+            if (rememberHiResVisible(currentSong)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    HiResBadge()
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // 歌曲信息
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -478,9 +568,10 @@ fun PlayerScreen(
                 com.whale.music.ui.playlist.AddToPlaylistSheet(
                     localSong = if (playing.albumId >= 0L) playing else null,
                     remoteSong = if (playing.albumId < 0L) {
+                        val wySrc = playing.albumId == com.whale.music.ui.player.PlayerViewModel.REMOTE_WY_ALBUM_ID
                         com.whale.music.data.model.RemoteSong(
-                            songId = "kw_${playing.id}",
-                            source = "kw",
+                            songId = "${if (wySrc) "wy" else "kw"}_${playing.id}",
+                            source = if (wySrc) "wy" else "kw",
                             rid = playing.id,
                             title = playing.title,
                             artist = playing.artist,

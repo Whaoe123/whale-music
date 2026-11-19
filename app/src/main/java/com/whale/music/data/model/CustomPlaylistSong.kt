@@ -24,9 +24,9 @@ data class CustomPlaylistSong(
     val duration: Long = 0L,
     /** >0 表示本地 MediaStore 歌曲，可直接播放 */
     val localSongId: Long = 0L,
-    /** 非空表示网络歌，格式 "kw_<rid>"；播放走在线链路 */
+    /** 非空表示网络歌，格式 "kw_<rid>" / "wy_<网易id>"；播放走在线链路 */
     val remoteSongId: String = "",
-    /** 酷我 rid，0 = 还没匹配过 */
+    /** 酷我 rid，0 = 还没匹配过（只有 remote_song_id 为 kw_ 来源才有意义） */
     val remoteRid: Long = 0L,
     val position: Int = 0,
     val addedAt: Long = System.currentTimeMillis()

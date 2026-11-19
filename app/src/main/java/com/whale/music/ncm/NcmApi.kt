@@ -312,7 +312,8 @@ object NcmApi {
         }
 
         // ⑤ 最后兜底：有网页版歌名、但接口死活不给详情的 → 用歌名先建条目，
-        //    播放时会按歌名+歌手去酷我匹配（RemoteMusicController.convertByName）
+        //    播放时优先按网易 id 直连取链（RemoteMusicController.resolveTrack），
+        //    拿不到链接才按「歌名+歌手」核对后转酷我
         var fromHtml = 0
         for (id in orderedIds) {
             if (byId.containsKey(id)) continue
@@ -486,14 +487,48 @@ object NcmApi {
     /**
      * 批量取播放链接，返回 id → https 地址。
      * 取不到的歌（版权/接口不发链接）不出现在结果里，由调用方决定提示方式。
+     *
+     * ## 音质：优先官方 EAPI 通道，失败回退网页接口
+     *
+     * - **EAPI（[NcmEapi]）**：按 `level` 点单，会员自动无损（flac），免费号稳定 320k；
+     *   带 30 秒截断流的多信号试听识别，试听片段自动跳过。
+     * - **网页接口（原有逻辑）**：`br=320000` 固定档，作为 EAPI 被风控/改版时的兜底，
+     *   保证「能出声」这条底线不因为换通道而丢。
+     *
+     * @param durations 已知总时长（毫秒），给试听识别用；不知道可不传
      */
-    suspend fun playUrls(session: NcmSession, ids: List<Long>): Map<Long, String> {
+    suspend fun playUrls(
+        session: NcmSession,
+        ids: List<Long>,
+        durations: Map<Long, Long> = emptyMap()
+    ): Map<Long, String> {
         if (ids.isEmpty()) return emptyMap()
         val result = mutableMapOf<Long, String>()
-        ids.chunked(500).forEach { batch ->
+
+        // ① EAPI 通道：档位取用户在设置里选的；选「自动」才按会员身份推
+        //    （会员无损 / 免费 320k），逐档降级 + PC/Android 双客户端
+        val level = session.qualityLevel() ?: NcmEapi.autoLevel(session.isVip())
+        try {
+            val eapi = NcmEapi.playUrls(session, ids, level, durations)
+            for ((id, url) in eapi) result[id] = url.replaceFirst("http://", "https://")
+        } catch (e: Exception) {
+            android.util.Log.w("NcmApi", "EAPI 取流失败，走网页接口兜底", e)
+        }
+
+        // ② 还缺的（版权/风控/降档链走完仍无地址）→ 网页接口补齐。
+        //    网页通道没有无损，最高只给 320k，所以 br 按所选档位映射、但封顶 320k，
+        //    这样选「标准」时兜底也不会倒退成 320k。
+        val fallbackBr = when (level) {
+            NcmLevel.STANDARD -> 128000
+            NcmLevel.HIGHER -> 192000
+            else -> 320000
+        }
+        val missing = ids.distinct().filter { it !in result }
+        if (missing.isEmpty()) return result
+        missing.chunked(500).forEach { batch ->
             val json = NcmHttp.get(
                 "$BASE/api/song/enhance/player/url?ids=" +
-                    URLEncoder.encode(JSONArray(batch).toString(), "UTF-8") + "&br=320000",
+                    URLEncoder.encode(JSONArray(batch).toString(), "UTF-8") + "&br=$fallbackBr",
                 session.cookieHeader()
             )
             val data = json.optJSONArray("data") ?: return@forEach

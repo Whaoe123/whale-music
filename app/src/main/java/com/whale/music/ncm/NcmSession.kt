@@ -28,6 +28,12 @@ class NcmSession @Inject constructor(
     private val _profile = MutableStateFlow<NcmProfile?>(null)
     val profile: StateFlow<NcmProfile?> = _profile.asStateFlow()
 
+    /**
+     * 是否有会员权益 —— 决定取流默认档位（会员无损 / 非会员 320k）。
+     * 资料还没拉到时按非会员处理：宁可先给 320k，也不要发一次必然被拒的无损请求。
+     */
+    fun isVip(): Boolean = _profile.value?.vip == true
+
     init {
         // 恢复上次登录态
         prefs.getString(KEY_COOKIES, null)?.let { raw ->
@@ -46,6 +52,25 @@ class NcmSession @Inject constructor(
 
     fun cookieHeader(): String =
         cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+
+    // ───────── 音质选择 ─────────
+
+    /**
+     * 用户选的音质档位；null = 自动（会员无损 / 免费 320k）。
+     * 存的是 [NcmLevel.ordinal]，-1 表示自动。
+     */
+    fun qualityLevel(): NcmLevel? {
+        val v = prefs.getInt(KEY_QUALITY, -1)
+        return if (v < 0) null else NcmLevel.entries.getOrNull(v)
+    }
+
+    /**
+     * 写入音质选择。**只写这一处** —— 播放取流、下载都从这里读，
+     * 切完还要调 `RemoteMusicController.clearResolvedUrls()` 清旧地址，否则仍是旧档位。
+     */
+    fun setQualityLevel(level: NcmLevel?) {
+        prefs.edit().putInt(KEY_QUALITY, level?.ordinal ?: -1).apply()
+    }
 
     /** 从响应头吸收 Set-Cookie（大小写不敏感，防漏） */
     fun absorb(conn: HttpURLConnection) {
@@ -125,7 +150,9 @@ class NcmSession @Inject constructor(
                 NcmProfile(
                     userId = it.optLong("userId"),
                     nickname = it.optString("nickname"),
-                    avatarUrl = it.optString("avatarUrl").replace("http://", "https://")
+                    avatarUrl = it.optString("avatarUrl").replace("http://", "https://"),
+                    // vipType: 0 无 / 11 音乐会员 / 12 黑胶；vipAvailable 是官方的"当前可用权益"位
+                    vip = it.optBoolean("vipAvailable") || it.optInt("vipType", 0) > 0
                 )
             }
         } catch (e: Exception) {
@@ -138,6 +165,8 @@ class NcmSession @Inject constructor(
     private companion object {
         const val TAG = "NcmSession"
         const val KEY_COOKIES = "cookies"
+        /** 音质选择：-1 = 自动，否则是 NcmLevel.ordinal */
+        const val KEY_QUALITY = "quality_level"
         const val COOKIE_SEP = "|"
         /** Set-Cookie 属性名（非 Cookie 本体，吸收时过滤） */
         val COOKIE_ATTRS = setOf("expires", "max-age", "path", "domain", "httponly", "secure", "samesite")

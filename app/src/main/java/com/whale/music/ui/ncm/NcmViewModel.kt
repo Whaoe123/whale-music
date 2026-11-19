@@ -381,7 +381,8 @@ class NcmViewModel @Inject constructor(
             _resolving.value = true
             try {
                 val urls = withContext(Dispatchers.IO) {
-                    NcmApi.playUrls(session, list.map { it.id })
+                    // 带上时长：EAPI 用它识别「没标 freeTrialInfo 却只有 30 秒」的截断试听流
+                    NcmApi.playUrls(session, list.map { it.id }, list.associate { it.id to it.duration })
                 }
                 val playable = list.mapNotNull { s ->
                     urls[s.id]?.let { s.copy(uri = it) }

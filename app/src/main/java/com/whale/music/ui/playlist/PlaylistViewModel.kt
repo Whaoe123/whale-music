@@ -563,5 +563,6 @@ private fun CustomPlaylistSong.toQsTrack(): QsTrack = QsTrack(
     album = album,
     cover = coverUrl,
     duration = duration,
-    kwRid = remoteRid.takeIf { it > 0 } ?: -1L
+    // 只有酷我来源的行才带 rid 直用；网易行的 remoteRid 是网易 id，当酷我 rid 会播错
+    kwRid = remoteRid.takeIf { it > 0 && remoteSongId.startsWith("kw_") } ?: -1L
 )

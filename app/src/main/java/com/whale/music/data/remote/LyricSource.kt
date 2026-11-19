@@ -44,9 +44,83 @@ object LyricSource {
             "https://music.163.com/api/song/lyric?id=$songId&lv=-1&kv=-1&tv=-1",
             ""
         )
-        val obj: JSONObject = json.optJSONObject("lrc") ?: return ""
-        return obj.optString("lyric")
+        val lrcObj: JSONObject = json.optJSONObject("lrc") ?: return ""
+        val lrc = lrcObj.optString("lyric")
+        if (lrc.isBlank()) return ""
+        // tv=-1 已经把译文一并返回了；不取白不取 —— 有译文就并到同一行
+        val tlrc = json.optJSONObject("tlyric")?.optString("lyric").orEmpty()
+        return if (tlrc.isBlank()) lrc else mergeTranslation(lrc, tlrc)
     }
+
+    /**
+     * 把翻译歌词并到原文的**同一行**（`原文 / 译文`）。
+     *
+     * 为什么另起一行不行：解析器会把没有时间戳的裸行整个丢掉；
+     * 同一时间戳写两行又会生成两条，高亮只认其中一条，看着像错位。
+     * 并到同一行就是一个时间戳、一行文字、一个高亮。
+     *
+     * 时间戳要按**毫秒**配对，不能按字符串 —— 原文 `[00:30.542]` 和
+     * 译文 `[00:30.54]` 格式常不一致，按字符串配对会整段对不上。
+     *
+     * （算法移植自 Sonance 播放器 `NeteaseMatch.mergeTranslation`）
+     */
+    private fun mergeTranslation(lrc: String, translation: String): String {
+        val translations = HashMap<Int, String>()
+        for (raw in translation.split('\n')) {
+            val (ms, text) = splitTaggedLine(raw) ?: continue
+            if (text.isNotEmpty()) translations[ms] = text
+        }
+        if (translations.isEmpty()) return lrc
+
+        val out = StringBuilder(lrc.length * 2)
+        for (raw in lrc.split('\n')) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            val parsed = splitTaggedLine(line)
+            if (parsed == null) {
+                // 元信息行（[ti:] / [ar:] …）原样保留
+                out.append(line).append('\n')
+                continue
+            }
+            val (ms, text) = parsed
+            out.append(line)
+            val tr = translations[ms]
+            // 译文和原文一样就不重复贴（有些歌的"翻译"其实是原文）
+            if (tr != null && tr != text) out.append(TRANSLATION_SEP).append(tr)
+            out.append('\n')
+        }
+        return out.toString().trimEnd()
+    }
+
+    /** 拆出 `[时间戳]正文` 的毫秒与正文；认不出来返回 null */
+    private fun splitTaggedLine(raw: String): Pair<Int, String>? {
+        val line = raw.trim()
+        if (!line.startsWith("[")) return null
+        val close = line.indexOf(']')
+        if (close <= 1) return null
+        val ms = timeKeyMs(line.substring(1, close)) ?: return null
+        return ms to line.substring(close + 1).trim()
+    }
+
+    /** `mm:ss` / `mm:ss.xx` / `mm:ss.xxx` / `hh:mm:ss` → 毫秒；认不出来返回 null */
+    private fun timeKeyMs(tag: String): Int? {
+        val parts = tag.trim().split(':')
+        if (parts.size < 2 || parts.size > 3) return null
+        return try {
+            val ms = if (parts.size == 3) {
+                ((parts[0].trim().toLong() * 3600 + parts[1].trim().toLong() * 60) * 1000L) +
+                    (parts[2].trim().toDouble() * 1000).toLong()
+            } else {
+                (parts[0].trim().toLong() * 60 * 1000L) + (parts[1].trim().toDouble() * 1000).toLong()
+            }
+            ms.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 原文与译文的分隔符（换行会让解析器把译文当裸行丢掉，所以用它） */
+    private const val TRANSLATION_SEP = " / "
 
     /** 解析 LRC：[mm:ss.xx] 或 [mm:ss:xx] */
     fun parseLrc(lrc: String): List<LyricLine> {

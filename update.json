@@ -1,7 +1,7 @@
 {
-  "versionCode": 25,
-  "versionName": "Whale 1.15",
-  "url": "https://github.com/Whaoe123/whale-music/releases/download/v1.15/whale-music-1.15.apk",
-  "sha256": "066e4b8069e3cf3bc8a7079f1f0359cc16d05f2d3111b6e7baf91cea3d2077f0",
-  "changelog": "Whale 1.15"
+  "versionCode": 29,
+  "versionName": "Whale 1.19",
+  "url": "https://github.com/Whaoe123/whale-music/releases/download/v1.19/whale-music-1.19.apk",
+  "sha256": "456c9e1caea6c4068686f263b10d265d4ea0b49b3b8ce9f758bf8b27d5c783ed",
+  "changelog": "Whale 1.19：新增 Hi·Res AUDIO 金标（按实际音质点亮）与音质选择（128k/192k/320k/无损/Hi-Res，即时生效）；网易云取流升级官方 EAPI，免费稳定 320k、会员可拿无损；在线歌词自动并入译文；下载走官方下载接口。"
 }

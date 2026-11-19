@@ -4,7 +4,9 @@ package com.whale.music.ncm
 data class NcmProfile(
     val userId: Long,
     val nickname: String,
-    val avatarUrl: String
+    val avatarUrl: String,
+    /** 是否有会员权益（决定取流默认档位：会员无损 / 非会员 320k） */
+    val vip: Boolean = false
 )
 
 /** 歌曲详情（兼容 v1 artists/album 与新版 ar/al 两种字段） */
