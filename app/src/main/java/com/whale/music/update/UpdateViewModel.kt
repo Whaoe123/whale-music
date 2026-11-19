@@ -42,6 +42,12 @@ class UpdateViewModel @Inject constructor(
 
     private var checking = false
 
+    /** 手动点「检测更新」触发的检查：发现新版本直接自动下载（启动时的自动检查不自动下，免得偷跑流量） */
+    private var autoUpdate = false
+
+    /** 自动下载完成后，不再多问一步，直接拉起系统安装页 */
+    private var autoInstallWhenReady = false
+
     /** 启动后延迟调用一次；重复调用会被忽略 */
     fun check() {
         if (checking) return
@@ -50,6 +56,9 @@ class UpdateViewModel @Inject constructor(
         viewModelScope.launch {
             val info = withContext(Dispatchers.IO) { repo.fetchRemote() }
             val local = withContext(Dispatchers.IO) { repo.currentVersionCode() }
+            // 消费「手动检测自动更新」标记：本次检查无论成败都用掉了，不留给下次启动
+            val auto = autoUpdate
+            autoUpdate = false
             if (info == null) {
                 // 检查失败：不弹窗，但告诉用户一声，避免"以为没在更新"
                 _state.value = State.UpToDate
@@ -58,6 +67,11 @@ class UpdateViewModel @Inject constructor(
             }
             if (repo.hasNewVersion(info)) {
                 _state.value = State.Available(info)
+                if (auto) {
+                    // 手动检测：直接开下，一路到系统安装页，不再让用户多点「立即更新」
+                    autoInstallWhenReady = true
+                    download()
+                }
             } else {
                 _state.value = State.UpToDate
                 _note.value = "更新检查完成：已是最新（本机 $local / 服务器 ${info.versionCode}）"
@@ -69,11 +83,12 @@ class UpdateViewModel @Inject constructor(
         _note.value = null
     }
 
-    /** 设置页「检测更新」用：强制重新检查一次（忽略上次结果与节流） */
+    /** 设置页「检测更新」用：强制重新检查一次（忽略上次结果与节流），找到新版直接更 */
     fun checkNow() {
         checking = false
         _state.value = State.Idle
         _note.value = null
+        autoUpdate = true
         check()
     }
 
@@ -111,8 +126,13 @@ class UpdateViewModel @Inject constructor(
                     }
                 }
                 _state.value = State.Ready(info, file)
+                if (autoInstallWhenReady) {
+                    autoInstallWhenReady = false
+                    install() // 自动流程：直接拉起系统安装页（系统仍会弹确认，不会静默装）
+                }
             } catch (e: Exception) {
                 Log.w("UpdateViewModel", "下载更新失败", e)
+                autoInstallWhenReady = false
                 _state.value = State.Failed(e.message ?: "下载失败", info)
             }
         }

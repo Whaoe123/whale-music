@@ -161,7 +161,12 @@ class UpdateRepository @Inject constructor(
      */
     fun download(info: UpdateInfo, onProgress: (Float, Float) -> Unit): File {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val target = File(dir, "whale-update.apk")
+        // 残段按版本号命名：旧版本没下完的字节不参与本次续传（跨版本 Range 起点对不上会 416），
+        // 顺手清掉其他版本留下的残段
+        val target = File(dir, "whale-update-${info.versionCode}.apk")
+        dir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("whale-update") && f.name != target.name) f.delete()
+        }
 
         val sources = buildList {
             if (info.url.startsWith("https://github.com/")) {
@@ -201,6 +206,17 @@ class UpdateRepository @Inject constructor(
         if (existing > 0) conn.setRequestProperty("Range", "bytes=$existing-")
 
         val code = conn.responseCode
+        // 416 = Range 起点超出服务端文件长度：残段要么其实已经下完，要么和这次的文件对不上。
+        // 不能当致命错误直接放弃 —— 先验残段 sha256，完整就直接用；不完整就删掉重新下（不再带 Range）
+        if (code == 416 && existing > 0) {
+            conn.disconnect()
+            if (info.sha256.isNotBlank() && verify(target, info.sha256)) {
+                onProgress(1f, 0f)
+                return target
+            }
+            target.delete()
+            return downloadFrom(url, target, info, onProgress) // existing=0 → 不再发 Range，不会再次 416
+        }
         val resumed = code == 206 && existing > 0
         if (code !in 200..299) {
             conn.disconnect()

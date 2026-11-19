@@ -278,14 +278,17 @@ fun PlayerScreen(
             LaunchedEffect(updateState) {
                 if (checkingFromSettings) {
                     when (updateState) {
-                        is com.whale.music.update.UpdateViewModel.State.Available -> {
+                        // 手动检测会直接进下载/安装流程（自动更新），设置弹窗让位给全局更新弹窗；
+                        // Available 可能一闪而过（直接转 Downloading），三种都要关
+                        is com.whale.music.update.UpdateViewModel.State.Available,
+                        is com.whale.music.update.UpdateViewModel.State.Downloading,
+                        is com.whale.music.update.UpdateViewModel.State.Ready,
+                        is com.whale.music.update.UpdateViewModel.State.Failed -> {
                             showSettings = false
                             checkingFromSettings = false
                         }
-                        is com.whale.music.update.UpdateViewModel.State.UpToDate,
-                        is com.whale.music.update.UpdateViewModel.State.Failed,
-                        is com.whale.music.update.UpdateViewModel.State.Downloading,
-                        is com.whale.music.update.UpdateViewModel.State.Ready -> checkingFromSettings = false
+
+                        is com.whale.music.update.UpdateViewModel.State.UpToDate -> checkingFromSettings = false
 
                         else -> Unit // Idle / Checking：还在跑，继续等
                     }
