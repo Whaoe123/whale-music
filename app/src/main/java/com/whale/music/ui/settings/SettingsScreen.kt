@@ -2,7 +2,9 @@ package com.whale.music.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +28,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -38,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
@@ -46,6 +52,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -83,6 +90,12 @@ fun SettingsScreen(
     // Hi·Res 金标（DisplayPrefs StateFlow，改完播放页立刻生效）
     val hiresEnabled by viewModel.hiresEnabled.collectAsState()
     val hiresScale by viewModel.hiresScale.collectAsState()
+    // 分区折叠：默认只展开「播放」，其余点标题展开（页面更整洁）
+    var secPlay by rememberSaveable { mutableStateOf(true) }
+    var secBadge by rememberSaveable { mutableStateOf(false) }
+    var secUpdate by rememberSaveable { mutableStateOf(false) }
+    var secCache by rememberSaveable { mutableStateOf(false) }
+    var secAbout by rememberSaveable { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -134,7 +147,11 @@ fun SettingsScreen(
         )
 
         // ───────── 播放 ─────────
-        SettingsCard(title = "播放") {
+        SettingsCard(
+            title = "播放",
+            expanded = secPlay,
+            onToggle = { secPlay = !secPlay }
+        ) {
             // 音质档位（搬自播放页「更多 → 音质」弹窗）
             QualityOptions(
                 selected = quality,
@@ -175,7 +192,11 @@ fun SettingsScreen(
         }
 
         // ───────── 封面金标（Hi·Res 徽章开关 + 大小） ─────────
-        SettingsCard(title = "封面金标") {
+        SettingsCard(
+            title = "封面金标",
+            expanded = secBadge,
+            onToggle = { secBadge = !secBadge }
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Hi·Res 金标", color = Color.White, fontSize = 15.sp)
@@ -226,7 +247,11 @@ fun SettingsScreen(
         }
 
         // ───────── 更新 ─────────
-        SettingsCard(title = "更新") {
+        SettingsCard(
+            title = "更新",
+            expanded = secUpdate,
+            onToggle = { secUpdate = !secUpdate }
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("当前版本", color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp)
@@ -260,7 +285,11 @@ fun SettingsScreen(
         }
 
         // ───────── 缓存 ─────────
-        SettingsCard(title = "缓存") {
+        SettingsCard(
+            title = "缓存",
+            expanded = secCache,
+            onToggle = { secCache = !secCache }
+        ) {
             Text(
                 "清理播放取址、歌词与搜索缓存。清完下一首会重新联网解析，歌单、收藏不受影响。",
                 color = Color.White.copy(alpha = 0.5f),
@@ -283,7 +312,11 @@ fun SettingsScreen(
         LxSourceSection(viewModel = viewModel)
 
         // ───────── 关于 ─────────
-        SettingsCard(title = "关于") {
+        SettingsCard(
+            title = "关于",
+            expanded = secAbout,
+            onToggle = { secAbout = !secAbout }
+        ) {
             Text(
                 "Whale · 在线音乐播放器",
                 color = Color.White,
@@ -353,6 +386,8 @@ private fun LxSourceSection(viewModel: SettingsViewModel) {
     // 从直链在线导入
     var scriptUrl by remember { mutableStateOf("") }
     var urlImporting by remember { mutableStateOf(false) }
+    // 分区折叠（默认收起，点标题展开）
+    var secLx by rememberSaveable { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -362,12 +397,17 @@ private fun LxSourceSection(viewModel: SettingsViewModel) {
             scope.launch {
                 val err = withContext(Dispatchers.IO) { viewModel.importLx(uri) }
                 importing = false
+                secLx = true // 结果提示在卡片里，自动展开才看得见
                 msg = err ?: "音源已导入，搜索与兜底播放立即可用"
             }
         }
     }
 
-    SettingsCard(title = "lx 音源（洛雪自定义脚本）") {
+    SettingsCard(
+        title = "lx 音源（洛雪自定义脚本）",
+        expanded = secLx,
+        onToggle = { secLx = !secLx }
+    ) {
         Text(
             "导入洛雪 v2 音源脚本后：搜索页可切换该音源，酷我找不到的歌也会用它兜底出声。" +
                 "脚本运行在离线沙箱里，不能直连网络，一切请求都走受控通道。",
@@ -473,6 +513,7 @@ private fun LxSourceSection(viewModel: SettingsViewModel) {
                             viewModel.importLxFromUrl(scriptUrl)
                         }
                         urlImporting = false
+                        secLx = true // 结果提示在卡片里，自动展开才看得见
                         msg = err ?: "音源已导入，搜索与兜底播放立即可用"
                         if (err == null) scriptUrl = ""
                     }
@@ -500,24 +541,62 @@ private fun updateStatusText(state: UpdateViewModel.State): String = when (state
     is UpdateViewModel.State.Failed -> "失败：${state.message}"
 }
 
-// ───────── 通用卡片 ─────────
+// ───────── 通用卡片（可折叠：点标题行收起 / 展开） ─────────
 
 @Composable
-private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsCard(
+    title: String,
+    /** null = 不可折叠；传状态让标题行可点 */
+    expanded: Boolean? = null,
+    onToggle: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
-        Text(
-            title,
-            color = Color.White.copy(alpha = 0.55f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(Modifier.height(8.dp))
-        content()
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
+        ) {
+            Text(
+                title,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f)
+            )
+            if (onToggle != null) {
+                val rotation by animateFloatAsState(
+                    targetValue = if (expanded == true) 180f else 0f,
+                    animationSpec = tween(220),
+                    label = "settingsChevron"
+                )
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded == true) "收起" else "展开",
+                    tint = Color.White.copy(alpha = 0.45f),
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
+            }
+        }
+        if (onToggle != null) {
+            AnimatedVisibility(visible = expanded == true) {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    content()
+                }
+            }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
     }
 }
 
