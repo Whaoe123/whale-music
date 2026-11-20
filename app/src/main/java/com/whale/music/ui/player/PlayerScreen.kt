@@ -1,10 +1,18 @@
 package com.whale.music.ui.player
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -18,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -51,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyColumn
@@ -74,6 +84,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +108,7 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.whale.music.R
 import com.whale.music.data.model.Song
+import com.whale.music.util.CoverPalette
 import com.whale.music.util.CoverResolver
 import com.whale.music.util.DisplayPrefs
 import com.whale.music.player.PlayMode
@@ -109,6 +121,8 @@ import com.whale.music.ui.components.rememberHiResVisible
 import com.whale.music.util.InteractiveHighlight
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * 播放页 — Spotify/Apple Music 同款方案
@@ -147,6 +161,11 @@ fun PlayerScreen(
 
     val playerArtwork by viewModel.artwork.collectAsState()
     val artUri: Any? = playerArtwork ?: currentSong?.let { CoverResolver.resolveSong(it.id, it.albumId) }
+
+    // 封面主色：驱动氛围光 / 进度条渐变 / 唱片反光（每首歌自动换色）
+    val accent by produceState(initialValue = ProgressActive, key1 = artUri) {
+        value = CoverPalette.dominant(artUri?.toString()) ?: ProgressActive
+    }
 
     // 歌词：点封面切换
     var showLyrics by remember { mutableStateOf(false) }
@@ -200,11 +219,25 @@ fun PlayerScreen(
                     fallback = painterResource(R.drawable.default_album_art)
                 )
             }
-            // 暗色遮罩
+            // 暗色遮罩（比旧版浅，氛围光才能透出来）
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(Color.Black.copy(alpha = 0.26f))
+            )
+            // 动态氛围光：两团随封面主色慢移的色斑（模块 C）
+            AuroraLayer(accent = accent)
+            // 底部渐变压暗，保证标题 / 控件可读
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.42f)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                        )
+                    )
             )
 
             // ── 内容 Column ──
@@ -290,10 +323,11 @@ fun PlayerScreen(
                             onTap = { showLyrics = false }
                         )
                     } else {
-                        AlbumArtCard(
+                        VinylCard(
                             song = currentSong,
                             artwork = artUri,
                             isPlaying = isPlaying,
+                            accent = accent,
                             modifier = Modifier.fillMaxSize(),
                             onTap = { showLyrics = true }
                         )
@@ -323,7 +357,7 @@ fun PlayerScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // 歌曲信息
+            // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行（按钮全部下移到控制栏）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -332,72 +366,58 @@ fun PlayerScreen(
                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
                     Text(
                         text = currentSong?.title ?: stringResource(R.string.status_not_playing),
-                        fontSize = 26.sp, fontWeight = FontWeight.Bold,
-                        color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        fontSize = 29.sp, fontWeight = FontWeight.Bold,
+                        color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.basicMarquee()
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(5.dp))
+                    val songNow = currentSong
+                    val srcLabel = when {
+                        songNow == null -> null
+                        songNow.albumId == PlayerViewModel.REMOTE_WY_ALBUM_ID -> "网易云"
+                        songNow.albumId == PlayerViewModel.REMOTE_LX_ALBUM_ID -> "自定义"
+                        songNow.albumId < 0L -> "酷我"
+                        else -> "本地"
+                    }
+                    val subtitle = listOfNotNull(
+                        songNow?.artist?.takeIf { it.isNotBlank() },
+                        songNow?.album?.takeIf { it.isNotBlank() },
+                        srcLabel
+                    ).joinToString("  ·  ")
                     Text(
-                        text = currentSong?.artist ?: "左右滑到「Whale-汽水」挑一首",
-                        fontSize = 15.sp, color = Color.White.copy(alpha = 0.7f),
+                        text = subtitle.ifBlank { "左右滑到「Whale-汽水」挑一首" },
+                        fontSize = 14.sp, color = Color.White.copy(alpha = 0.62f),
                         maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                PressableIconButton(
-                    onClick = viewModel::togglePlayMode,
-                    buttonSize = 52.dp
-                ) {
-                    Icon(
-                        imageVector = when (playMode) {
-                            PlayMode.SEQUENCE -> Icons.Default.Repeat
-                            PlayMode.REPEAT_ONE -> Icons.Default.RepeatOne
-                            PlayMode.SHUFFLE -> Icons.Default.Shuffle
-                        },
-                        contentDescription = stringResource(
-                            R.string.action_change_play_mode,
-                            playModeLabel
-                        ),
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                PressableIconButton(
-                    onClick = viewModel::toggleFavorite,
-                    buttonSize = 52.dp
-                ) {
-                    Icon(
-                        if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = stringResource(
-                            if (isFavorite) R.string.action_unfavorite else R.string.action_favorite
-                        ),
-                        tint = if (isFavorite) Color.White else Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 进度条（独立组合，避免每 500ms 整页重组）
-            ProgressArea(viewModel = viewModel)
+            // 进度条（独立组合，避免每 500ms 整页重组；激活段随封面主色渐变）
+            ProgressArea(viewModel = viewModel, accent = accent)
 
             Spacer(modifier = Modifier.weight(1f))
         }
         } // backdrop source wrapper
 
-        // ── 播放控件 — sibling overlay，居中定位 ──
+        // ── 播放控件 — sibling overlay，5 键标准控制栏 ──
         PlaybackGlassControls(
             backdrop = backdrop,
             isPlaying = isPlaying,
+            playMode = playMode,
+            modeLabel = playModeLabel,
+            isFavorite = isFavorite,
             onPrevious = viewModel::previous,
             onTogglePlay = viewModel::togglePlay,
             onNext = viewModel::next,
+            onToggleMode = viewModel::togglePlayMode,
+            onToggleFavorite = viewModel::toggleFavorite,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = controlsBottomPadding)
                 .fillMaxWidth()
-                .padding(horizontal = 36.dp)
+                .padding(horizontal = 28.dp)
         )
 
         // ── 加入歌单 ──
@@ -431,70 +451,148 @@ fun PlayerScreen(
     }
 }
 
-/** 专辑封面卡片 — 外发光 */
+/**
+ * 黑胶唱片封面（模块 A）：
+ * - 播放时匀速旋转、暂停即停（Animatable 保留角度，续播接着转）
+ * - 外圈氛围光晕随播放呼吸
+ * - 盘面沟槽 + 主色反光环 + 中心圆封面 + 轴孔
+ * - 点按照旧切歌词；上下滑切歌由外层 SwipeToSwitch 处理
+ */
 @Composable
-private fun AlbumArtCard(
+private fun VinylCard(
     song: Song?,
     artwork: Any?,
     isPlaying: Boolean,
+    accent: Color,
     modifier: Modifier = Modifier,
     onTap: (() -> Unit)? = null
 ) {
-    val cornerRadius = 20.dp
     val context = LocalContext.current
 
-    Box(
-        modifier = modifier
-            .graphicsLayer {
-                // 外发光：shadowElevation + shape
-                shadowElevation = if (isPlaying) 24f else 12f
-                shape = RoundedCornerShape(cornerRadius)
-                clip = false
-                ambientShadowColor = Color.White
-                spotShadowColor = Color.White
+    // 旋转角：播放转、暂停停
+    val rotation = remember { Animatable(0f) }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            while (true) {
+                val from = rotation.value
+                rotation.animateTo(from + 360f, tween(14_000, easing = LinearEasing))
             }
-    ) {
-        // 封面卡片
+        } else {
+            rotation.stop()
+        }
+    }
+
+    // 呼吸：光晕亮度 + 唱片轻微缩放
+    val pulseT = rememberInfiniteTransition(label = "vinylPulse")
+    val breathe by pulseT.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(2_200, easing = LinearEasing), RepeatMode.Reverse),
+        label = "breathe"
+    )
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        // 外圈氛围光晕（呼吸）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(cornerRadius))
+                .graphicsLayer {
+                    alpha = if (isPlaying) 0.30f + breathe * 0.40f else 0.22f
+                }
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            accent.copy(alpha = 0.60f),
+                            accent.copy(alpha = 0.16f),
+                            Color.Transparent
+                        )
+                    ),
+                    CircleShape
+                )
+        )
+
+        // 唱片本体
+        Box(
+            modifier = Modifier
+                .fillMaxSize(0.84f)
+                .graphicsLayer {
+                    rotationZ = rotation.value
+                    val s = 1f + if (isPlaying) breathe * 0.012f else 0f
+                    scaleX = s
+                    scaleY = s
+                    shadowElevation = 18f
+                    shape = CircleShape
+                    ambientShadowColor = accent.copy(alpha = 0.5f)
+                    spotShadowColor = accent.copy(alpha = 0.5f)
+                }
+                .clip(CircleShape)
+                .background(
+                    Brush.radialGradient(
+                        listOf(Color(0xFF2C2C2F), Color(0xFF141416), Color(0xFF0C0C0E))
+                    )
+                )
                 .then(
                     if (onTap != null) Modifier.clickable(
                         interactionSource = null,
                         indication = null,
                         onClick = onTap
                     ) else Modifier
-                )
-                .drawBehind {
-                    val strokeW = 2.5f.dp.toPx()
-                    val r = cornerRadius.toPx()
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.25f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.White.copy(alpha = 0.3f)
-                            )
-                        ),
-                        cornerRadius = CornerRadius(r),
-                        style = Stroke(width = strokeW)
-                    )
-                },
+                ),
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                // 固定按 ~1000px 解码：封面源已是 800×800，避免按小图拉伸发糊
-                model = ImageRequest.Builder(context)
-                    .data(artwork)
-                    .size(1024, 1024)
-                    .build(),
-                contentDescription = song?.title,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                placeholder = painterResource(R.drawable.default_album_art),
-                error = painterResource(R.drawable.default_album_art),
-                fallback = painterResource(R.drawable.default_album_art)
+            // 沟槽 + 外缘高光 + 主色反光环
+            Canvas(Modifier.fillMaxSize()) {
+                val d = size.minDimension
+                val stroke = 1.1f.dp.toPx()
+                for (i in 0..7) {
+                    drawCircle(
+                        Color.White.copy(alpha = if (i % 2 == 0) 0.055f else 0.03f),
+                        radius = d * (0.305f + i * 0.021f),
+                        style = Stroke(width = stroke)
+                    )
+                }
+                drawCircle(
+                    Color.White.copy(alpha = 0.12f),
+                    radius = d / 2f - 1.5f.dp.toPx(),
+                    style = Stroke(width = 1.4f.dp.toPx())
+                )
+                drawCircle(
+                    accent.copy(alpha = 0.35f),
+                    radius = d * 0.462f,
+                    style = Stroke(width = 1.6f.dp.toPx())
+                )
+            }
+
+            // 中心封面标签（圆）
+            Box(
+                modifier = Modifier
+                    .fillMaxSize(0.56f)
+                    .clip(CircleShape)
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(artwork)
+                        .size(512, 512)
+                        .build(),
+                    contentDescription = song?.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    placeholder = painterResource(R.drawable.default_album_art),
+                    error = painterResource(R.drawable.default_album_art),
+                    fallback = painterResource(R.drawable.default_album_art)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize(0.56f)
+                    .border(1.6.dp, Color.White.copy(alpha = 0.16f), CircleShape)
+            )
+            // 唱片轴孔
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF08080A))
+                    .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
             )
         }
     }
@@ -566,17 +664,23 @@ private fun SwipeToSwitch(
 }
 
 /**
- * 播放控件 — 严格按 AndroidLiquidGlass 库规范
- * drawBackdrop(backdrop) + CircleShape + vibrancy/blur/lens
+ * 播放控件 — 5 键标准控制栏（模块 B）：
+ * 模式 | 上一首 | 播放 | 下一首 | 喜欢
+ * 玻璃按钮规范不变：drawBackdrop + CircleShape + vibrancy/blur/lens
  * + InteractiveHighlight 触摸高光 + layerBlock 按压缩放
  */
 @Composable
 private fun PlaybackGlassControls(
     backdrop: Backdrop,
     isPlaying: Boolean,
+    playMode: PlayMode,
+    modeLabel: String,
+    isFavorite: Boolean,
     onPrevious: () -> Unit,
     onTogglePlay: () -> Unit,
     onNext: () -> Unit,
+    onToggleMode: () -> Unit,
+    onToggleFavorite: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val animationScope = rememberCoroutineScope()
@@ -586,29 +690,53 @@ private fun PlaybackGlassControls(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        GlassButton(backdrop, 60.dp, onPrevious, animationScope) {
+        // 播放模式（顺序 / 单曲 / 随机）
+        GlassButton(backdrop, 40.dp, onToggleMode, animationScope) {
+            Icon(
+                imageVector = when (playMode) {
+                    PlayMode.SEQUENCE -> Icons.Default.Repeat
+                    PlayMode.REPEAT_ONE -> Icons.Default.RepeatOne
+                    PlayMode.SHUFFLE -> Icons.Default.Shuffle
+                },
+                contentDescription = modeLabel,
+                tint = if (playMode == PlayMode.SEQUENCE) {
+                    Color.White.copy(alpha = 0.55f)
+                } else Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        GlassButton(backdrop, 50.dp, onPrevious, animationScope) {
             Icon(
                 Icons.Default.SkipPrevious,
                 stringResource(R.string.action_previous),
                 tint = TextPrimary,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(26.dp)
             )
         }
-        Spacer(Modifier.width(16.dp))
-        GlassButton(backdrop, 86.dp, onTogglePlay, animationScope) {
+        GlassButton(backdrop, 78.dp, onTogglePlay, animationScope) {
             Icon(
                 if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 stringResource(if (isPlaying) R.string.action_pause else R.string.action_play),
-                tint = TextPrimary, modifier = Modifier.size(42.dp)
+                tint = TextPrimary, modifier = Modifier.size(38.dp)
             )
         }
-        Spacer(Modifier.width(16.dp))
-        GlassButton(backdrop, 60.dp, onNext, animationScope) {
+        GlassButton(backdrop, 50.dp, onNext, animationScope) {
             Icon(
                 Icons.Default.SkipNext,
                 stringResource(R.string.action_next),
                 tint = TextPrimary,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(26.dp)
+            )
+        }
+        // 喜欢
+        GlassButton(backdrop, 40.dp, onToggleFavorite, animationScope) {
+            Icon(
+                if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                contentDescription = stringResource(
+                    if (isFavorite) R.string.action_unfavorite else R.string.action_favorite
+                ),
+                tint = if (isFavorite) Color(0xFFFF5F7E) else Color.White.copy(alpha = 0.55f),
+                modifier = Modifier.size(20.dp)
             )
         }
     }
@@ -668,6 +796,85 @@ private fun GlassButton(
         contentAlignment = Alignment.Center
     ) {
         content()
+    }
+}
+
+/**
+ * 动态氛围光（模块 C）— 两团随封面主色慢移、呼吸的径向色斑。
+ * 状态只在 graphicsLayer 块里读，不引起整页重组。
+ */
+@Composable
+private fun AuroraLayer(accent: Color) {
+    val t = rememberInfiniteTransition(label = "aurora")
+    val phase1 by t.animateFloat(
+        0f, (2 * Math.PI).toFloat(),
+        infiniteRepeatable(tween(26_000, easing = LinearEasing)), label = "p1"
+    )
+    val phase2 by t.animateFloat(
+        0f, (2 * Math.PI).toFloat(),
+        infiniteRepeatable(tween(34_000, easing = LinearEasing)), label = "p2"
+    )
+    val pulse1 by t.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(3_600, easing = LinearEasing), RepeatMode.Reverse),
+        label = "pu1"
+    )
+    val pulse2 by t.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(4_400, easing = LinearEasing), RepeatMode.Reverse),
+        label = "pu2"
+    )
+
+    // 画布尺寸：供色斑按比例漂移（普通 var，随动画帧重读）
+    var canvasW = remember { 1f }
+    var canvasH = remember { 1f }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged {
+                canvasW = it.width.toFloat().coerceAtLeast(1f)
+                canvasH = it.height.toFloat().coerceAtLeast(1f)
+            }
+    ) {
+        // 主光：左上区慢移
+        Box(
+            Modifier
+                .fillMaxSize(0.95f)
+                .align(Alignment.TopStart)
+                .graphicsLayer {
+                    translationX = sin(phase1) * canvasW * 0.10f
+                    translationY = cos(phase1) * canvasH * 0.05f
+                    alpha = 0.45f + pulse1 * 0.55f
+                }
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            accent.copy(alpha = 0.50f),
+                            accent.copy(alpha = 0.12f),
+                            Color.Transparent
+                        )
+                    ),
+                    CircleShape
+                )
+        )
+        // 副光：右下区慢移（相位错开）
+        Box(
+            Modifier
+                .fillMaxSize(0.8f)
+                .align(Alignment.BottomEnd)
+                .graphicsLayer {
+                    translationX = cos(phase2) * canvasW * 0.08f
+                    translationY = sin(phase2) * canvasH * 0.04f
+                    alpha = 0.40f + pulse2 * 0.50f
+                }
+                .background(
+                    Brush.radialGradient(
+                        listOf(accent.copy(alpha = 0.38f), Color.Transparent)
+                    ),
+                    CircleShape
+                )
+        )
     }
 }
 
@@ -754,9 +961,9 @@ private fun LyricsPanel(
     }
 }
 
-/** 进度条 + 时间 — 自带状态订阅，只重组自身 */
+/** 进度条 + 时间 — 自带状态订阅，只重组自身；主色→白 渐变 + 发光圆点（模块 B） */
 @Composable
-private fun ProgressArea(viewModel: PlayerViewModel) {
+private fun ProgressArea(viewModel: PlayerViewModel, accent: Color) {
     val uiState by viewModel.uiState.collectAsState()
     val progress = uiState.progress
     val currentPosition = uiState.currentPosition
@@ -775,22 +982,33 @@ private fun ProgressArea(viewModel: PlayerViewModel) {
             }
         }
     ) {
-        val trackHeight = 3.dp.toPx()
-        val dotRadius = 5.5f.dp.toPx()
+        val trackHeight = 3.5f.dp.toPx()
+        val dotRadius = 6f.dp.toPx()
         val y = size.height / 2f
         val w = size.width
-        val cornerRadius = 1.5.dp.toPx()
+        val cornerRadius = 1.75.dp.toPx()
 
         drawRoundRect(
             ProgressInactive, Offset(0f, y - trackHeight / 2f),
             Size(w, trackHeight), CornerRadius(cornerRadius)
         )
         val activeWidth = w * progress
-        drawRoundRect(
-            ProgressActive, Offset(0f, y - trackHeight / 2f),
-            Size(activeWidth, trackHeight), CornerRadius(cornerRadius)
-        )
-        drawCircle(ProgressActive, dotRadius, Offset(activeWidth, y))
+        if (activeWidth > 0f) {
+            // 激活段：封面主色 → 白 渐变
+            drawRoundRect(
+                brush = Brush.horizontalGradient(listOf(accent, Color.White)),
+                topLeft = Offset(0f, y - trackHeight / 2f),
+                size = Size(activeWidth, trackHeight),
+                cornerRadius = CornerRadius(cornerRadius)
+            )
+            // 圆点光晕
+            drawCircle(
+                accent.copy(alpha = 0.30f),
+                radius = dotRadius * 2.4f,
+                center = Offset(activeWidth, y)
+            )
+        }
+        drawCircle(Color.White, dotRadius, Offset(activeWidth, y))
     }
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
