@@ -104,18 +104,14 @@ fun SimpleBottomTabs(
             onTabSelected(target)
         }
 
-        // ── 层1：容器壳（液态玻璃）──
+        // ── 层1：容器壳（液态玻璃，全局配方）──
         Row(
             Modifier
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        vibrancy()
-                        blur(4f.dp.toPx())
-                        lens(24f.dp.toPx(), 24f.dp.toPx())
-                    },
-                    onDrawSurface = { drawRect(containerColor) }
+                .liquidGlass(
+                    backdrop,
+                    Capsule(),
+                    tintColor = if (isLightTheme) Color(0xFFFAFAFA) else Color(0xFF121212),
+                    tintAlpha = 0.4f
                 )
                 .height(if (landscape) 38.dp else 46.dp)
                 .fillMaxWidth()
@@ -140,28 +136,13 @@ fun SimpleBottomTabs(
                     scaleX = pressScale.value
                     scaleY = pressScale.value
                 }
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        blur(4f.dp.toPx())
-                        lens(12f.dp.toPx() * pressProgress, 12f.dp.toPx() * pressProgress)
-                    },
-                    highlight = {
-                        Highlight.Default.copy(alpha = pressProgress)
-                    },
-                    shadow = {
-                        Shadow(alpha = 0.2f + 0.1f * pressProgress)
-                    },
-                    innerShadow = {
-                        InnerShadow(
-                            radius = lerp(4f, 8f, pressProgress).dp,
-                            alpha = 0.15f + 0.05f * pressProgress
-                        )
-                    },
-                    onDrawSurface = {
-                        drawRect(Color.White.copy(alpha = lerp(0.12f, 0.2f, pressProgress)))
-                    }
+                .liquidGlass(
+                    backdrop,
+                    Capsule(),
+                    press = pressProgress,
+                    tintColor = Color.White,
+                    tintAlpha = 0.16f,
+                    withInnerShadow = true
                 )
                 .height(38.dp)
                 .fillMaxWidth(1f / tabsCount)

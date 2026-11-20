@@ -65,6 +65,8 @@ import com.whale.music.ui.discover.DiscoverScreen
 import com.whale.music.ui.player.MiniPlayerBar
 import com.whale.music.ui.player.PlayerMorphLayer
 import com.whale.music.ui.player.PlayerScreen
+import com.whale.music.ui.player.rememberPlayerMorphController
+import com.whale.music.ui.player.smoothstep
 import com.whale.music.ui.player.PlayerViewModel
 import com.whale.music.ui.playlist.PlaylistScreen
 import com.whale.music.ui.settings.SettingsScreen
@@ -151,6 +153,8 @@ class MainActivity : ComponentActivity() {
                 var playerMorphOpen by rememberSaveable { mutableStateOf(false) }
                 // 卡片当前矩形（窗口坐标），作为形变展开的起点（打开瞬间锁定）
                 var morphSourceBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+                // 形变控制器：卡片上拖跟手展开 / 播放页下滑跟手收起，与形变层共享进度
+                val morphController = rememberPlayerMorphController()
 
                 LaunchedEffect(pagerState) {
                     snapshotFlow { pagerState.currentPage }.collect { selectedTab = it }
@@ -270,6 +274,10 @@ class MainActivity : ComponentActivity() {
                         enter = fadeIn(tween(200)),
                         exit = fadeOut(tween(140)),
                         modifier = Modifier
+                            // 拖拽展开时卡片随进度淡出（玻璃壳接管视觉）
+                            .graphicsLayer {
+                                alpha = 1f - smoothstep(0.05f, 0.38f, morphController.progress)
+                            }
                             .align(Alignment.BottomCenter)
                             .zIndex(2f)
                     ) {
@@ -288,6 +296,7 @@ class MainActivity : ComponentActivity() {
                                 // 两种模式都走形变动画：卡片玻璃壳长成全屏播放页
                                 playerMorphOpen = true
                             },
+                            morph = morphController,
                             onCardBounds = { morphSourceBounds = it },
                             modifier = Modifier
                                 .padding(horizontal = if (landscape) 12.dp else 16.dp)
@@ -364,6 +373,7 @@ class MainActivity : ComponentActivity() {
                     // ── 悬浮卡片 → 播放页形变层（点卡片展开 / 返回键收回，材质同卡片玻璃）──
                     PlayerMorphLayer(
                         backdrop = backdrop,
+                        controller = morphController,
                         open = playerMorphOpen,
                         onOpenChange = { playerMorphOpen = it },
                         sourceBounds = { morphSourceBounds },

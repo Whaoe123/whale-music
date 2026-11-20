@@ -109,6 +109,7 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import androidx.compose.foundation.layout.wrapContentWidth
 import com.whale.music.R
+import com.whale.music.ui.components.liquidGlass
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.pager.HorizontalPager
@@ -996,32 +997,20 @@ private fun GlassButton(
     Box(
         modifier = Modifier
             .size(btnSize)
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { CircleShape },
-                effects = {
-                    vibrancy()
-                    blur(4f.dp.toPx())
-                    lens(12f.dp.toPx(), 18f.dp.toPx(), chromaticAberration = true)
-                },
-                highlight = {
-                    Highlight.Default.copy(alpha = 0.5f + 0.4f * p)
-                },
-                shadow = {
-                    Shadow(alpha = 0.35f + 0.3f * p)
-                },
-                innerShadow = {
-                    InnerShadow(radius = 4f.dp + 3f.dp * p, alpha = 0.25f + 0.35f * p)
-                },
-                layerBlock = {
-                    scaleX = 1f - 0.06f * p
-                    scaleY = 1f - 0.06f * p
-                    val off = highlight.offset
-                    translationX = btnSize.toPx() * 0.015f * (off.x / btnSize.toPx() - 0.5f)
-                    translationY = btnSize.toPx() * 0.015f * (off.y / btnSize.toPx() - 0.5f)
-                },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.15f)) }
-            )
+            .liquidGlass(
+                backdrop,
+                CircleShape,
+                press = p,
+                tintColor = Color.White,
+                tintAlpha = 0.15f,
+                withInnerShadow = true
+            ) {
+                scaleX = 1f - 0.06f * p
+                scaleY = 1f - 0.06f * p
+                val off = highlight.offset
+                translationX = btnSize.toPx() * 0.015f * (off.x / btnSize.toPx() - 0.5f)
+                translationY = btnSize.toPx() * 0.015f * (off.y / btnSize.toPx() - 0.5f)
+            }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
             .then(highlight.modifier)
             .then(highlight.gestureModifier),

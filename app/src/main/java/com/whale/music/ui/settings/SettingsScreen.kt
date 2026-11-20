@@ -97,9 +97,16 @@ fun SettingsScreen(
     var secPlay by rememberSaveable { mutableStateOf(true) }
     var secUi by rememberSaveable { mutableStateOf(true) }
     var secBadge by rememberSaveable { mutableStateOf(false) }
+    var secGlass by rememberSaveable { mutableStateOf(false) }
     var secUpdate by rememberSaveable { mutableStateOf(false) }
     var secCache by rememberSaveable { mutableStateOf(false) }
     var secAbout by rememberSaveable { mutableStateOf(false) }
+    // 液态玻璃（GlassPrefs：折射 / 厚度 / 色散 / 模糊 / 高光，全局玻璃控件实时生效）
+    val glassRefraction by com.whale.music.util.GlassPrefs.refraction.collectAsState()
+    val glassThickness by com.whale.music.util.GlassPrefs.thickness.collectAsState()
+    val glassDispersion by com.whale.music.util.GlassPrefs.dispersion.collectAsState()
+    val glassBlur by com.whale.music.util.GlassPrefs.blur.collectAsState()
+    val glassHighlight by com.whale.music.util.GlassPrefs.highlight.collectAsState()
 
     Box(
         modifier = modifier
@@ -296,6 +303,78 @@ fun SettingsScreen(
                         uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
                     )
                 )
+            }
+        }
+
+        // ───────── 液态玻璃（全局玻璃材质：折射 / 厚度 / 色散 / 模糊 / 高光） ─────────
+        SettingsCard(
+            title = "液态玻璃",
+            expanded = secGlass,
+            onToggle = { secGlass = !secGlass }
+        ) {
+            Text(
+                "卡片、底部导航、按钮共用的玻璃配方。调完整个界面的玻璃质感同步变化。",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+            Spacer(Modifier.height(6.dp))
+            GlassSliderRow(
+                label = "折射",
+                hint = "光线穿过玻璃的弯折程度",
+                value = glassRefraction,
+                range = 0f..200f,
+                valueLabel = "${glassRefraction.toInt()}%",
+                onValueChange = { com.whale.music.util.GlassPrefs.setRefraction(it) }
+            )
+            GlassSliderRow(
+                label = "深度 / 厚度",
+                hint = "玻璃的厚度感，越厚边缘越厚实",
+                value = glassThickness,
+                range = 0f..200f,
+                valueLabel = "${glassThickness.toInt()}%",
+                onValueChange = { com.whale.music.util.GlassPrefs.setThickness(it) }
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("色散", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "边缘出彩虹色差（chromatic aberration）",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = glassDispersion,
+                    onCheckedChange = { com.whale.music.util.GlassPrefs.setDispersion(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Color(0xFF60A5FA),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
+                    )
+                )
+            }
+            GlassSliderRow(
+                label = "背景模糊",
+                hint = "玻璃背后内容的模糊程度",
+                value = glassBlur,
+                range = 0f..300f,
+                valueLabel = "${glassBlur.toInt()}%",
+                onValueChange = { com.whale.music.util.GlassPrefs.setBlur(it) }
+            )
+            GlassSliderRow(
+                label = "高光 / 反射",
+                hint = "玻璃边缘的亮边强度",
+                value = glassHighlight,
+                range = 0f..200f,
+                valueLabel = "${glassHighlight.toInt()}%",
+                onValueChange = { com.whale.music.util.GlassPrefs.setHighlight(it) }
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = { com.whale.music.util.GlassPrefs.reset() }) {
+                    Text("恢复默认", color = Color(0xFF60A5FA), fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -661,4 +740,34 @@ private fun SettingsDivider() {
             .height(1.dp)
             .background(Color.White.copy(alpha = 0.1f))
     ) {}
+}
+
+// ───────── 液态玻璃滑杆行（折射 / 厚度 / 模糊 / 高光） ─────────
+
+@Composable
+private fun GlassSliderRow(
+    label: String,
+    hint: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    valueLabel: String,
+    onValueChange: (Float) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color.White, fontSize = 15.sp)
+            Text(hint, color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp)
+        }
+        Text(valueLabel, color = Color(0xFF60A5FA), fontSize = 13.sp)
+    }
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = range,
+        colors = SliderDefaults.colors(
+            thumbColor = Color(0xFF60A5FA),
+            activeTrackColor = Color(0xFF60A5FA),
+            inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+        )
+    )
 }

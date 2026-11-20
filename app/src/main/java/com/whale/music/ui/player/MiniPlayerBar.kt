@@ -82,6 +82,7 @@ import com.kyant.shapes.Capsule
 import com.whale.music.R
 import com.whale.music.data.model.Song
 import com.whale.music.ui.components.PressableIconButton
+import com.whale.music.ui.components.liquidGlass
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -114,6 +115,8 @@ fun MiniPlayerBar(
     onPrevious: () -> Unit,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 形变控制器：长条上拖时跟手展开播放页（AuraPlayer MiniPlayerDragAxis.EXPAND） */
+    morph: PlayerMorphController? = null,
     /** 当前可见卡片形态（长条 / CD 按钮）在窗口里的矩形，供展开形变锁定起点 */
     onCardBounds: (androidx.compose.ui.geometry.Rect?) -> Unit = {}
 ) {
@@ -163,6 +166,7 @@ fun MiniPlayerBar(
                 onPrevious = onPrevious,
                 onOpen = onOpen,
                 onCollapse = { onCollapsedChange(true) },
+                morph = morph,
                 onCardBounds = onCardBounds
             )
         }
@@ -185,6 +189,7 @@ private fun ExpandedBar(
     onPrevious: () -> Unit,
     onOpen: () -> Unit,
     onCollapse: () -> Unit,
+    morph: PlayerMorphController?,
     onCardBounds: (androidx.compose.ui.geometry.Rect?) -> Unit
 ) {
     val density = LocalDensity.current
@@ -199,6 +204,8 @@ private fun ExpandedBar(
     var dragY by remember { mutableFloatStateOf(0f) }
     var pressed by remember { mutableStateOf(false) }
     var backJob by remember { mutableStateOf<Job?>(null) }
+    // 上拖展开的行程 = 卡片顶到屏幕顶的距离（AuraPlayer swipeRange 同款）
+    var barTopPx by remember { mutableFloatStateOf(1f) }
 
     // 松手回位：两轴并行弹簧，视觉上像被弹回原位
     fun springBack() {
@@ -225,7 +232,11 @@ private fun ExpandedBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(if (landscape) 44.dp else 58.dp)
-            .onGloballyPositioned { onCardBounds(it.boundsInWindow()) }
+            .onGloballyPositioned {
+                val bounds = it.boundsInWindow()
+                onCardBounds(bounds)
+                barTopPx = bounds.top.coerceAtLeast(1f)
+            }
             .graphicsLayer {
                 // 位移/缩放只在绘制阶段读取，拖拽过程中不触发重组
                 val fx = (dragX / switchThreshold).coerceIn(-1f, 1f)
@@ -251,64 +262,90 @@ private fun ExpandedBar(
                         var accX = 0f
                         var accY = 0f
                         var axis = 0 // 0 未定 / 1 水平 / 2 垂直
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            accX += change.positionChange().x
-                            accY += change.positionChange().y
-                            if (axis == 0 &&
-                                (abs(accX) > viewConfiguration.touchSlop ||
-                                    abs(accY) > viewConfiguration.touchSlop)
-                            ) {
-                                axis = if (abs(accX) >= abs(accY)) 1 else 2
-                            }
-                            if (axis == 1) {
-                                change.consume()
-                                dragX = accX
-                                dragY = accY * 0.18f
-                            } else if (axis == 2) {
-                                change.consume()
-                                // 只响应向下拖；向上给一点阻尼
-                                dragY = if (accY > 0f) accY else accY * 0.22f
-                                dragX = accX * 0.18f
-                            }
-                        }
-                        pressed = false
-
-                        when {
-                            // 单击 → 打开播放页
-                            axis == 0 -> {
-                                dragX = 0f
-                                dragY = 0f
-                                onOpen()
-                            }
-
-                            // 水平 → 切歌（左滑下一首 / 右滑上一首）
-                            axis == 1 -> {
-                                val dir = when {
-                                    accX <= -switchThreshold -> -1
-                                    accX >= switchThreshold -> 1
-                                    else -> 0
+                        var expandDrag = false // 向上拖 → 跟手展开播放页
+                        var expandOrigin = 0f
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                accX += change.positionChange().x
+                                accY += change.positionChange().y
+                                if (axis == 0 &&
+                                    (abs(accX) > viewConfiguration.touchSlop ||
+                                        abs(accY) > viewConfiguration.touchSlop)
+                                ) {
+                                    axis = if (abs(accX) >= abs(accY)) 1 else 2
+                                    if (axis == 2 && accY < 0f && morph != null) {
+                                        // AuraPlayer MiniPlayerDragAxis.EXPAND：上拖跟手展开
+                                        expandDrag = true
+                                        expandOrigin = morph.progress
+                                        morph.gesturing = true
+                                    }
                                 }
-                                if (dir < 0) onNext() else if (dir > 0) onPrevious()
-                                springBack()
+                                if (axis == 1) {
+                                    change.consume()
+                                    dragX = accX
+                                    dragY = accY * 0.18f
+                                } else if (expandDrag && morph != null) {
+                                    change.consume()
+                                    dragX = accX * 0.18f
+                                    dragY = accY * 0.22f
+                                    // 受限作用域（AwaitPointerEventScope）里用 scope 跟手
+                                    scope.launch { morph.dragTo(expandOrigin - accY / barTopPx) }
+                                } else if (axis == 2) {
+                                    change.consume()
+                                    // 只响应向下拖；向上给一点阻尼
+                                    dragY = if (accY > 0f) accY else accY * 0.22f
+                                    dragX = accX * 0.18f
+                                }
                             }
 
-                            // 垂直 → 收起成 CD / 回弹
-                            else -> {
-                                if (accY >= collapseThreshold) onCollapse() else springBack()
+                            when {
+                                // 单击 → 打开播放页
+                                axis == 0 -> {
+                                    dragX = 0f
+                                    dragY = 0f
+                                    onOpen()
+                                }
+
+                                // 水平 → 切歌（左滑下一首 / 右滑上一首）
+                                axis == 1 -> {
+                                    val dir = when {
+                                        accX <= -switchThreshold -> -1
+                                        accX >= switchThreshold -> 1
+                                        else -> 0
+                                    }
+                                    if (dir < 0) onNext() else if (dir > 0) onPrevious()
+                                    springBack()
+                                }
+
+                                // 上拖展开：过 12% 进度进播放页；不足弹回卡片（形变层收尾）
+                                expandDrag && morph != null -> {
+                                    if (morph.progress > 0.12f) onOpen()
+                                    springBack()
+                                }
+
+                                // 垂直向下 → 收起成 CD / 回弹
+                                else -> {
+                                    if (accY >= collapseThreshold) onCollapse() else springBack()
+                                }
                             }
+                        } finally {
+                            // 手势正常结束或被中断（指针取消/被移出组合），
+                            // 都把控制权还给形变层：按 open 弹开或弹回卡片
+                            pressed = false
+                            if (expandDrag && morph != null) morph.gesturing = false
                         }
                     }
                 }
         )
 
-        // 玻璃胶囊 + 内容（材质与 PlayerMorph 的形变层同源：playerCardMaterial）
+        // 玻璃胶囊 + 内容（材质与播放页形变层同源：liquidGlass 全局液态玻璃）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .playerCardMaterial(backdrop, Capsule())
+                .liquidGlass(backdrop, Capsule())
         ) {
             Row(
                 modifier = Modifier
@@ -445,7 +482,7 @@ private fun CdButton(
                 onClick = onExpand,
                 onLongClick = onOpen
             )
-            .playerCardMaterial(backdrop, CircleShape)
+            .liquidGlass(backdrop, CircleShape, withInnerShadow = true)
     ) {
         // 唱片主体：封面随角度旋转
         Box(

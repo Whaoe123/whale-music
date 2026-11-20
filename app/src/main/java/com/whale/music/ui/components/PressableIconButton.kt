@@ -54,18 +54,13 @@ fun PressableIconButton(
     val currentOnClick by rememberUpdatedState(onClick)
 
     val appearance = if (backdrop != null) {
-        Modifier.drawBackdrop(
-            backdrop = backdrop,
-            shape = { CircleShape },
-            effects = {
-                vibrancy()
-                blur(4f.dp.toPx())
-                lens(10f.dp.toPx() * p, 14.dp.toPx() * p)
-            },
-            highlight = { Highlight.Default.copy(alpha = 0.30f + 0.50f * p) },
-            shadow = { Shadow(alpha = 0.20f + 0.25f * p) },
-            innerShadow = { InnerShadow(radius = (4f + 4f * p).dp, alpha = 0.18f + 0.32f * p) },
-            onDrawSurface = { drawRect(Color.White.copy(alpha = 0.12f + 0.16f * p)) }
+        Modifier.liquidGlass(
+            backdrop,
+            CircleShape,
+            press = p,
+            tintColor = Color.White,
+            tintAlpha = 0.14f,
+            withInnerShadow = true
         )
     } else {
         Modifier.drawBehind {
