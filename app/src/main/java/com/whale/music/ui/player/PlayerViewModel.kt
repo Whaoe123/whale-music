@@ -14,9 +14,11 @@ import com.whale.music.ncm.NcmSession
 import com.whale.music.player.MusicPlayerManager
 import com.whale.music.player.PlayMode
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -76,26 +78,39 @@ class PlayerViewModel @Inject constructor(
     /**
      * 爱心状态：本地歌查本地库，网络歌（酷我/汽水/网易解析播放）查在线收藏表。
      * 网络歌播放时 Song.albumId 固定为 -1，以此区分。
+     *
+     * 三类真值源都先物化成 Set 再判断 —— 每次判断 O(1)，
+     * 不再对全量歌曲/收藏列表做 firstOrNull / any 线性扫。
      */
+    private val remoteFavoriteKeys: Flow<Set<String>> = remoteSongDao.getAll()
+        .map { list -> list.mapTo(HashSet(list.size)) { it.songId } }
+
     private val favoriteState = combine(
         playerManager.currentSong,
-        repository.allSongs,
-        remoteSongDao.getAll(),
+        repository.favoriteIds,
+        remoteFavoriteKeys,
         likedCatalog.keys
-    ) { currentSong, songs, remoteFavorites, likedKeys ->
+    ) { currentSong, favIds, remoteKeys, likedKeys ->
         when {
             currentSong == null -> false
             // 网易云红心只读点亮：按歌名+歌手归一化匹配，不用用户再点一次
             SongKey.variants(currentSong.title, currentSong.artist).any { it in likedKeys } -> true
-            currentSong.albumId == REMOTE_ALBUM_ID || currentSong.albumId == REMOTE_WY_ALBUM_ID ->
-                remoteFavorites.any { it.songId == remoteKeyId(currentSong) }
-            else -> songs.firstOrNull { it.id == currentSong.id }?.isFavorite ?: false
+            isRemoteSong(currentSong) -> remoteKeyId(currentSong) in remoteKeys
+            else -> currentSong.id in favIds
         }
     }
 
-    /** 播放中的网络歌 → 在线收藏表主键（按来源建 kw_/wy_ 前缀） */
-    private fun remoteKeyId(song: Song): String =
-        "${if (song.albumId == REMOTE_WY_ALBUM_ID) "wy" else "kw"}_${song.id}"
+    /** 网络歌（酷我 / 网易 / lx）在本地 Song 里的 albumId 标记 */
+    private fun isRemoteSong(song: Song): Boolean =
+        song.albumId == REMOTE_ALBUM_ID || song.albumId == REMOTE_WY_ALBUM_ID ||
+            song.albumId == REMOTE_LX_ALBUM_ID
+
+    /** 播放中的网络歌 → 在线收藏表主键（按来源建 kw_/wy_/lx_ 前缀） */
+    private fun remoteKeyId(song: Song): String = when (song.albumId) {
+        REMOTE_WY_ALBUM_ID -> "wy_${song.id}"
+        REMOTE_LX_ALBUM_ID -> "lx_${song.id}"
+        else -> "kw_${song.id}"
+    }
 
     val uiState: StateFlow<PlayerUiState> = combine(
         playbackState,
@@ -142,8 +157,12 @@ class PlayerViewModel @Inject constructor(
         // 网易云红心是只读真值源：这类歌爱心恒亮，点击不反向回写
         if (SongKey.variants(song.title, song.artist).any { it in likedCatalog.keys.value }) return
         viewModelScope.launch {
-            if (song.albumId == REMOTE_ALBUM_ID || song.albumId == REMOTE_WY_ALBUM_ID) {
-                val source = if (song.albumId == REMOTE_WY_ALBUM_ID) "wy" else "kw"
+            if (isRemoteSong(song)) {
+                val source = when (song.albumId) {
+                    REMOTE_WY_ALBUM_ID -> "wy"
+                    REMOTE_LX_ALBUM_ID -> "lx"
+                    else -> "kw"
+                }
                 val songId = "${source}_${song.id}"
                 if (remoteSongDao.count(songId) > 0) {
                     remoteSongDao.delete(songId)
@@ -173,5 +192,8 @@ class PlayerViewModel @Inject constructor(
 
         /** RemoteMusicController.toLocalSong 给网易网络歌的 albumId 标记（rid 是网易 id） */
         const val REMOTE_WY_ALBUM_ID = -2L
+
+        /** RemoteMusicController.toLocalSong 给 lx 自定义音源网络歌的 albumId 标记 */
+        const val REMOTE_LX_ALBUM_ID = -3L
     }
 }

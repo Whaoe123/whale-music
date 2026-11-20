@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.whale.music.data.local.PlaybackMemory
 import com.whale.music.data.model.QsTrack
 import com.whale.music.data.remote.KwSource
-import com.whale.music.data.remote.QishuiSource
 import com.whale.music.data.remote.RemoteMusicController
 import com.whale.music.data.sync.NcmLikedSync
 import com.whale.music.data.sync.SongKey
@@ -13,7 +12,6 @@ import com.whale.music.ncm.NcmApi
 import com.whale.music.ncm.NcmSession
 import com.whale.music.ncm.NcmSongDto
 import com.whale.music.player.MusicPlayerManager
-import com.whale.music.ui.qishui.QishuiSession
 import com.whale.music.util.CrashGuard
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -28,11 +26,10 @@ import javax.inject.Inject
  * 优先顺序：
  * 1. 开机快照未超过 4 小时 → 从快照里那首、那个精准进度续播（不重新拉推荐）；
  * 2. 快照过期 / 没有 → 按登录态重新拉：已登录网易云每日推荐，未登录热歌榜；
- * 3. 网易云整条链路失败 → 汽水电台主题搜酷我；
- * 4. 再不行 → 汽水每日精选歌单第一张。
+ * 3. 网易云整条链路失败 → 酷我热歌榜兜底（匿名可用）。
  *
  * 重新拉成功后会写入一份新快照。所有音频一律交给酷我出声。
- * 开关：曲库/汽水页的「自动播放」关闭时完全不打扰。
+ * 开关：设置页的「启动自动播放」关闭时完全不打扰。
  * 所有对播放器的调用一律切回主线程（Media3 只允许主线程操作）。
  */
 @HiltViewModel
@@ -40,7 +37,6 @@ class StartupViewModel @Inject constructor(
     private val controller: RemoteMusicController,
     private val playerManager: MusicPlayerManager,
     private val memory: PlaybackMemory,
-    private val qishuiSession: QishuiSession,
     private val ncmSession: NcmSession,
     private val ncmLikedSync: NcmLikedSync
 ) : ViewModel() {
@@ -59,9 +55,6 @@ class StartupViewModel @Inject constructor(
         if (!memory.autoplayEnabled) return
         // 上次启动崩溃过：这次先不放，让 App 稳稳打开，用户可以手动点播
         if (CrashGuard.skipAutoplayOnce) return
-
-        // 电台请求要带登录 Cookie（汽水那条兜底路线的前提）
-        QishuiSource.cookieProvider = { qishuiSession.cookieHeader() }
 
         viewModelScope.launch {
             try {
@@ -122,53 +115,17 @@ class StartupViewModel @Inject constructor(
             }
         }
 
-        // ── 2. 汽水电台：拿主题去酷我搜同风格热门歌 ──
-        val radio = runCatching { QishuiSource.recommendRadios() }
-            .getOrNull()
-            .orEmpty()
-            .firstOrNull { it.title.isNotBlank() }
-
-        if (radio != null) {
-            if (qishuiSession.isLoggedIn()) {
-                val tracks = runCatching { QishuiSource.radioTracks(radio.id) }
-                    .getOrNull()
-                    .orEmpty()
-                if (tracks.isNotEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        controller.playQishui(tracks, 0, 0L, fromStartup = true)
-                    }
-                    memory.saveStartupSnapshot(tracks, "radio")
-                    return
-                }
-            }
-            val songs = withContext(Dispatchers.IO) {
-                runCatching { KwSource.search(radio.title, pageSize = 20) }
-                    .getOrDefault(emptyList())
-            }
-            if (songs.isNotEmpty()) {
-                val tracks = songs.map { it.toQsTrack() }
-                withContext(Dispatchers.Main) {
-                    controller.playQishui(tracks, 0, 0L, fromStartup = true)
-                }
-                memory.saveStartupSnapshot(tracks, "kw_radio")
-                return
-            }
+        // ── 2. 网易云整条链路失败 → 酷我热歌榜兜底（匿名可用，整曲完整下发）──
+        val kwSongs = withContext(Dispatchers.IO) {
+            runCatching { KwSource.recommend(30) }.getOrDefault(emptyList())
         }
-
-        // ── 3. 汽水每日精选歌单兜底 ──
-        val first = runCatching { QishuiSource.recommend(12) }
-            .getOrNull()
-            .orEmpty()
-            .firstOrNull() ?: return
-        val page = runCatching {
-            QishuiSource.playlistTracks(first.id, null, 50)
-        }.getOrNull() ?: return
-        if (page.tracks.isEmpty()) return
-        memory.rememberQishui(first.id, 0)
-        withContext(Dispatchers.Main) {
-            controller.playQishui(page.tracks, 0, 0L, fromStartup = true)
+        if (kwSongs.isNotEmpty()) {
+            val tracks = kwSongs.map { it.toQsTrack() }
+            withContext(Dispatchers.Main) {
+                controller.playQishui(tracks, 0, 0L, fromStartup = true)
+            }
+            memory.saveStartupSnapshot(tracks, "kw")
         }
-        memory.saveStartupSnapshot(page.tracks, "qishui")
     }
 
     private fun NcmSongDto.toQsTrack(): QsTrack? {

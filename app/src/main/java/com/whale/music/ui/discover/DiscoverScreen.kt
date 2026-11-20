@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -102,6 +104,7 @@ fun DiscoverScreen(
     val favorites by viewModel.remoteFavorites.collectAsState()
     val likedKeys by viewModel.likedKeys.collectAsState()
     val artwork by viewModel.artwork.collectAsState()
+    val lxScripts by viewModel.lxScripts.collectAsState()
     val context = LocalContext.current
 
     // 网易云账号：登录态只用于「我的日推 / 红心」，不影响下方搜索与播放
@@ -148,7 +151,10 @@ fun DiscoverScreen(
     }
 
     // 本地在线收藏 + 网易云红心（只读点亮，按歌名+歌手归一化匹配）
-    val favoriteIds = favorites.map { it.songId }.toSet() + likedKeys
+    // remember：只在收藏/红心变化时重建，避免每次重组都对全量收藏做 map+toSet
+    val favoriteIds = remember(favorites, likedKeys) {
+        favorites.map { it.songId }.toSet() + likedKeys
+    }
 
     Box(
         modifier = modifier
@@ -269,7 +275,7 @@ fun DiscoverScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // ── 搜索框（点顶栏搜索按钮展开，样式与第二页同一套）──
+                // ── 搜索框（点顶栏搜索按钮展开）──
                 if (searchMode) {
                     DiscoverSearchBar(
                         query = uiState.query,
@@ -280,6 +286,41 @@ fun DiscoverScreen(
                             viewModel.clearSearch()
                         }
                     )
+                    // ── 音源切换：酷我 / 已导入的 lx 脚本（只有一个音源时不摆出来）──
+                    val sources = buildList {
+                        add("kw" to "酷我")
+                        lxScripts.filter { it.enabled }.forEach { add("lx:${it.id}" to it.name) }
+                    }
+                    if (sources.size > 1) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            sources.forEach { (id, label) ->
+                                val selected = uiState.searchSource == id
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(
+                                            if (selected) Color(0xFF60A5FA).copy(alpha = 0.30f)
+                                            else Color.White.copy(alpha = 0.10f)
+                                        )
+                                        .clickable { viewModel.setSearchSource(id) }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        label,
+                                        fontSize = 12.sp,
+                                        color = if (selected) Color(0xFF93C5FD)
+                                        else Color.White.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(10.dp))
                 }
 

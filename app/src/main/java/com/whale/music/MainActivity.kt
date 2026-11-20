@@ -32,7 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -65,7 +65,7 @@ import com.whale.music.ui.player.MiniPlayerBar
 import com.whale.music.ui.player.PlayerScreen
 import com.whale.music.ui.player.PlayerViewModel
 import com.whale.music.ui.playlist.PlaylistScreen
-import com.whale.music.ui.qishui.QishuiHomeScreen
+import com.whale.music.ui.settings.SettingsScreen
 import com.whale.music.ui.theme.OHMusicTheme
 import com.whale.music.ui.update.UpdateDialog
 import com.whale.music.update.UpdateViewModel
@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
                 val saveableStateHolder = rememberSaveableStateHolder()
 
                 var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-                // 四页 pager：播放器 / Whale-汽水 / Whale-网易云 / 曲库
+                // 四页 pager：播放器 / 发现 / 音乐库 / 设置
                 val pagerState = rememberPagerState(initialPage = selectedTab) { 4 }
                 val tabScope = rememberCoroutineScope()
                 val canReadAudio by hasAudioPermission.collectAsState()
@@ -211,18 +211,22 @@ class MainActivity : ComponentActivity() {
                                         // 第一页就是播放器：打开 App 直接看到大封面
                                         0 -> PlayerScreen(
                                             modifier = Modifier.fillMaxSize(),
-                                            controlsBottomPadding = 92.dp
+                                            controlsBottomPadding = 92.dp,
+                                            onOpenSettings = {
+                                                selectedTab = 3
+                                                tabScope.launch { pagerState.animateScrollToPage(3) }
+                                            }
                                         )
 
-                                        1 -> QishuiHomeScreen(modifier = Modifier.fillMaxSize())
+                                        1 -> DiscoverScreen(modifier = Modifier.fillMaxSize())
 
-                                        2 -> DiscoverScreen(modifier = Modifier.fillMaxSize())
-
-                                        else -> PlaylistScreen(
+                                        2 -> PlaylistScreen(
                                             hasAudioPermission = canReadAudio,
                                             onRequestPermission = ::requestAudioPermission,
                                             modifier = Modifier.fillMaxSize()
                                         )
+
+                                        else -> SettingsScreen(modifier = Modifier.fillMaxSize())
                                     }
                                 }
                             }
@@ -273,16 +277,16 @@ class MainActivity : ComponentActivity() {
                         },
                         tabLabels = listOf(
                             stringResource(R.string.tab_player),
-                            stringResource(R.string.tab_qishui),
                             stringResource(R.string.tab_discover),
-                            stringResource(R.string.tab_library)
+                            stringResource(R.string.tab_library),
+                            stringResource(R.string.tab_settings)
                         ),
                         tabContent = { index, isSelected ->
                             val icon = when (index) {
                                 0 -> Icons.Default.MusicNote
-                                1 -> Icons.Default.Star
-                                2 -> Icons.Default.Explore
-                                else -> Icons.AutoMirrored.Filled.QueueMusic
+                                1 -> Icons.Default.Explore
+                                2 -> Icons.AutoMirrored.Filled.QueueMusic
+                                else -> Icons.Default.Settings
                             }
                             val iconSize by animateDpAsState(
                                 targetValue = if (isSelected) 25.dp else 21.dp,

@@ -46,6 +46,8 @@ data class DiscoverUiState(
     val playlists: List<WyPlaylist> = emptyList(),
     val query: String = "",
     val searching: Boolean = false,
+    /** 搜索音源："kw" = 酷我；"lx:<scriptId>" = 洛雪自定义音源 */
+    val searchSource: String = "kw",
     val searchResults: List<RemoteSong>? = null,   // null = 非搜索态
     val openedPlaylist: WyPlaylist? = null,
     val playlistSongs: List<RemoteSong> = emptyList(),
@@ -63,11 +65,15 @@ class DiscoverViewModel @Inject constructor(
     private val remoteSongDao: RemoteSongDao,
     private val session: NcmSession,
     private val playerManager: MusicPlayerManager,
-    private val likedCatalog: LikedCatalog
+    private val likedCatalog: LikedCatalog,
+    private val lxManager: com.whale.music.data.lx.LxSourceManager
 ) : ViewModel() {
 
     /** 当前播放封面 — 发现页背景与其他页面保持一致 */
     val artwork: StateFlow<Any?> = playerManager.artwork
+
+    /** 已导入的 lx 音源脚本（设置页导入，这里只读用来摆音源切换） */
+    val lxScripts = lxManager.scripts
 
     /** 网易云「我喜欢的音乐」归一化 key —— 只读点亮，不写入本地收藏表 */
     val likedKeys: StateFlow<Set<String>> = likedCatalog.keys
@@ -217,16 +223,33 @@ class DiscoverViewModel @Inject constructor(
             _uiState.update { it.copy(searchResults = null, searching = false) }
             return
         }
+        val source = _uiState.value.searchSource
         searchJob = viewModelScope.launch {
             delay(400) // 防抖
             val seq = ++searchSeq
             _uiState.update { it.copy(searching = true) }
             val results = withContext(Dispatchers.IO) {
-                try { KwSource.search(q) } catch (e: Exception) { emptyList<RemoteSong>() }
+                try {
+                    if (source.startsWith("lx:")) {
+                        lxManager.search(q, source.removePrefix("lx:"), 30)
+                    } else {
+                        KwSource.search(q)
+                    }
+                } catch (e: Exception) {
+                    emptyList<RemoteSong>()
+                }
             }
             if (seq != searchSeq) return@launch // 已被更新请求取代
             _uiState.update { it.copy(searching = false, searchResults = results) }
         }
+    }
+
+    /** 切换搜索音源（酷我 / lx 脚本），当前关键词立即按新音源重搜 */
+    fun setSearchSource(source: String) {
+        if (_uiState.value.searchSource == source) return
+        _uiState.update { it.copy(searchSource = source) }
+        val q = _uiState.value.query
+        if (q.isNotBlank()) onQueryChange(q)
     }
 
     fun clearSearch() {

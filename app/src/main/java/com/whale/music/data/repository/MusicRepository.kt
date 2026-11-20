@@ -11,6 +11,7 @@ import com.whale.music.util.CoverResolver
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,6 +28,15 @@ class MusicRepository @Inject constructor(
 ) {
     val allSongs: Flow<List<Song>> = songDao.getAllSongs()
     val favoriteSongs: Flow<List<Song>> = songDao.getFavoriteSongs()
+
+    /**
+     * 本地收藏 id 索引（O(1) 判断爱心用）。
+     * 只在收藏表变化时重建一次，播放页/列表每次判断走 `contains`，
+     * 不再对全量歌曲做 firstOrNull 线性扫。
+     */
+    val favoriteIds: Flow<Set<Long>> = favoriteSongs.map { list ->
+        list.mapTo(HashSet(list.size)) { it.id }
+    }
 
     suspend fun toggleFavorite(songId: Long) = songDao.toggleFavorite(songId)
 

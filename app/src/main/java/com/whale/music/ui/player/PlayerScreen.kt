@@ -40,15 +40,12 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -100,7 +97,6 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.whale.music.R
 import com.whale.music.data.model.Song
-import com.whale.music.ncm.NcmLevel
 import com.whale.music.util.CoverResolver
 import com.whale.music.player.PlayMode
 import com.whale.music.ui.theme.ProgressActive
@@ -124,6 +120,8 @@ fun PlayerScreen(
     modifier: Modifier = Modifier,
     /** 底部播放控件距屏幕底部的距离；全屏覆盖模式传小值 */
     controlsBottomPadding: Dp = 128.dp,
+    /** 右上角齿轮 → 跳到设置页（音质 / 更新 / 自动播放都在那） */
+    onOpenSettings: () -> Unit = {},
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -153,24 +151,6 @@ fun PlayerScreen(
     var showLyrics by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
-    // 右上角设置弹窗（当前版本号 + 检测更新）
-    var showSettings by remember { mutableStateOf(false) }
-    // 音质选择弹窗（更多 → 音质）
-    var showQuality by remember { mutableStateOf(false) }
-    var quality by remember { mutableStateOf(viewModel.qualityLevel()) }
-    /** 音质档位的显示文案；null = 自动 */
-    val qualityLabel: (NcmLevel?) -> String = { lv ->
-        when (lv) {
-            null -> "自动"
-            NcmLevel.STANDARD -> "标准 128k"
-            NcmLevel.HIGHER -> "较高 192k"
-            NcmLevel.EXHIGH -> "极高 320k"
-            NcmLevel.LOSSLESS -> "无损"
-            NcmLevel.HIRES -> "Hi-Res"
-        }
-    }
-    val updateVm: com.whale.music.update.UpdateViewModel = hiltViewModel()
-    val updateState by updateVm.state.collectAsState()
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
     var lyrics by remember { mutableStateOf<List<com.whale.music.data.remote.LyricLine>>(emptyList()) }
     var lyricsLoading by remember { mutableStateOf(false) }
@@ -248,9 +228,9 @@ fun PlayerScreen(
                     color = Color.White.copy(alpha = 0.45f)
                 )
                 Spacer(Modifier.weight(1f))
-                // 设置（版本号 / 检测更新）
+                // 设置 → 跳设置页（版本 / 检测更新 / 音质 / 自动播放）
                 PressableIconButton(
-                    onClick = { showSettings = true },
+                    onClick = onOpenSettings,
                     buttonSize = 44.dp,
                     baseAlpha = 0f
                 ) {
@@ -287,158 +267,8 @@ fun PlayerScreen(
                             text = { Text("切到歌词", fontSize = 13.sp, color = Color.White) },
                             onClick = { moreMenu = false; showLyrics = true }
                         )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "音质：${qualityLabel(quality)}",
-                                    fontSize = 13.sp,
-                                    color = Color.White
-                                )
-                            },
-                            onClick = { moreMenu = false; showQuality = true }
-                        )
                     }
                 }
-            }
-
-            // ── 音质弹窗：选档位 → 真正改接口 level 参数 + 清地址缓存 ──
-            if (showQuality) {
-                // 自动 = 按会员身份推（会员无损 / 免费 320k），其余按所选档位点单
-                val options = listOf<Pair<NcmLevel?, String>>(
-                    null to "自动（会员无损 / 免费 320k）",
-                    NcmLevel.STANDARD to "标准 128k",
-                    NcmLevel.HIGHER to "较高 192k",
-                    NcmLevel.EXHIGH to "极高 320k",
-                    NcmLevel.LOSSLESS to "无损 FLAC",
-                    NcmLevel.HIRES to "Hi-Res"
-                )
-                AlertDialog(
-                    onDismissRequest = { showQuality = false },
-                    containerColor = Color(0xFF242426),
-                    title = { Text("音质", color = Color.White) },
-                    text = {
-                        Column {
-                            options.forEach { (lv, label) ->
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            quality = lv
-                                            viewModel.setQualityLevel(lv)
-                                            showQuality = false
-                                        }
-                                ) {
-                                    RadioButton(selected = quality == lv, onClick = null)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(label, color = Color.White, fontSize = 14.sp)
-                                }
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "选完立即生效：下一首按新档位重新取地址，已下载的文件不变。" +
-                                    "无损 / Hi-Res 需要网易云会员。",
-                                color = Color.White.copy(alpha = 0.5f),
-                                fontSize = 11.sp
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showQuality = false }) {
-                            Text("关闭", color = Color.White)
-                        }
-                    }
-                )
-            }
-
-            // ── 设置弹窗：当前版本号 + 检测更新 ──
-            var checkingFromSettings by remember { mutableStateOf(false) }
-            LaunchedEffect(updateState) {
-                if (checkingFromSettings) {
-                    when (updateState) {
-                        // 手动检测会直接进下载/安装流程（自动更新），设置弹窗让位给全局更新弹窗；
-                        // Available 可能一闪而过（直接转 Downloading），三种都要关
-                        is com.whale.music.update.UpdateViewModel.State.Available,
-                        is com.whale.music.update.UpdateViewModel.State.Downloading,
-                        is com.whale.music.update.UpdateViewModel.State.Ready,
-                        is com.whale.music.update.UpdateViewModel.State.Failed -> {
-                            showSettings = false
-                            checkingFromSettings = false
-                        }
-
-                        is com.whale.music.update.UpdateViewModel.State.UpToDate -> checkingFromSettings = false
-
-                        else -> Unit // Idle / Checking：还在跑，继续等
-                    }
-                }
-            }
-            if (showSettings) {
-                val status = when (val s = updateState) {
-                    is com.whale.music.update.UpdateViewModel.State.Idle -> "尚未检查"
-                    is com.whale.music.update.UpdateViewModel.State.Checking -> "正在检查更新…"
-                    is com.whale.music.update.UpdateViewModel.State.UpToDate -> "已是最新版本"
-                    is com.whale.music.update.UpdateViewModel.State.Available ->
-                        "发现新版本 ${s.info.versionName}（${s.info.versionCode}）"
-
-                    is com.whale.music.update.UpdateViewModel.State.Downloading ->
-                        "下载中 ${(s.progress * 100).toInt()}%"
-
-                    is com.whale.music.update.UpdateViewModel.State.Ready -> "已下载完成，点「立即更新」安装"
-                    is com.whale.music.update.UpdateViewModel.State.Failed -> "失败：${s.message}"
-                }
-                AlertDialog(
-                    onDismissRequest = { showSettings = false },
-                    containerColor = Color(0xFF1C1C1E),
-                    titleContentColor = Color.White,
-                    textContentColor = Color.White.copy(alpha = 0.75f),
-                    title = {
-                        Text(
-                            "设置",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                "当前版本",
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.45f)
-                            )
-                            Text(
-                                updateVm.localVersionLabel(),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color.White
-                            )
-                            Text(
-                                "更新状态",
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.45f)
-                            )
-                            Text(
-                                status,
-                                fontSize = 13.sp,
-                                color = Color(0xFF60A5FA),
-                                lineHeight = 19.sp
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            checkingFromSettings = true
-                            updateVm.checkNow()
-                        }) {
-                            Text("检测更新", color = Color(0xFF60A5FA), fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showSettings = false }) {
-                            Text("关闭", color = Color.White.copy(alpha = 0.6f))
-                        }
-                    }
-                )
             }
 
             // 封面 / 歌词（点击切换；上下滑切歌）
@@ -568,10 +398,14 @@ fun PlayerScreen(
                 com.whale.music.ui.playlist.AddToPlaylistSheet(
                     localSong = if (playing.albumId >= 0L) playing else null,
                     remoteSong = if (playing.albumId < 0L) {
-                        val wySrc = playing.albumId == com.whale.music.ui.player.PlayerViewModel.REMOTE_WY_ALBUM_ID
+                        val src = when (playing.albumId) {
+                            com.whale.music.ui.player.PlayerViewModel.REMOTE_WY_ALBUM_ID -> "wy"
+                            com.whale.music.ui.player.PlayerViewModel.REMOTE_LX_ALBUM_ID -> "lx"
+                            else -> "kw"
+                        }
                         com.whale.music.data.model.RemoteSong(
-                            songId = "${if (wySrc) "wy" else "kw"}_${playing.id}",
-                            source = if (wySrc) "wy" else "kw",
+                            songId = "${src}_${playing.id}",
+                            source = src,
                             rid = playing.id,
                             title = playing.title,
                             artist = playing.artist,

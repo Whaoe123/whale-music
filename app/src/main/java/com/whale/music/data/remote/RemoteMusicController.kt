@@ -40,7 +40,8 @@ class RemoteMusicController @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val playerManager: MusicPlayerManager,
     private val session: NcmSession,
-    private val memory: PlaybackMemory
+    private val memory: PlaybackMemory,
+    private val lxManager: com.whale.music.data.lx.LxSourceManager
 ) {
 
     /** 单次播放列表最多解析的曲目数，避免一次点播全列表请求爆炸 */
@@ -52,6 +53,14 @@ class RemoteMusicController @Inject constructor(
     /** 汽水 → 酷我 的匹配缓存，key 是汽水 trackId */
     private val kwMatchCache = ConcurrentHashMap<String, RemoteSong>()
     private val kwMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 网易取流失败的短 TTL 负缓存：同一首 10 分钟内不再打网易接口，
+     * 直接走酷我兜底。批量播放时 VIP/无版权曲会反复撞同一个 rid，
+     * 不记下来就是每批都白打一轮网易。
+     * 切换音质（clearResolvedUrls）时作废；登录后靠 TTL 自愈。
+     */
+    private val wyUrlMiss = com.whale.music.util.TtlCache<Boolean>(maxSize = 256)
 
     /**
      * 后台批量解析协程。挂上异常处理器：批解析失败只记日志，
@@ -83,25 +92,58 @@ class RemoteMusicController @Inject constructor(
      */
     fun clearResolvedUrls() {
         urlCache.clear()
+        wyUrlMiss.clear()
         NcmEapi.clearCache()
         Log.i("RemoteMusicController", "音质已切换，清空地址缓存")
     }
 
     private suspend fun resolveUrlUncached(song: RemoteSong): String? {
+        // lx 自定义音源：地址只由脚本解析
+        if (song.source == "lx") {
+            return lxManager.playUrl(song, lxQuality())
+        }
         if (song.source == "kw") {
             KwSource.playUrl(song.rid)?.let { return it }
             // 这条 rid 失效了 → 按「歌名 + 歌手」在酷我重新核对一条活的
-            return matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }
+            matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
+            // 酷我也没有 → lx 脚本音源兜底
+            return lxFallback(toMatchTrack(song))
         }
-        val wyUrl = try {
-            // 带上已知时长：EAPI 会用它识别「接口没标、实际只有 30 秒」的截断试听流
-            NcmApi.playUrls(session, listOf(song.rid), mapOf(song.rid to song.duration))[song.rid]
-        } catch (e: Exception) {
+        // 10 分钟内刚拿过「网易不给链接」→ 直接走酷我兜底，不再白打一轮
+        var cacheableMiss = false
+        val wyUrl = if (wyUrlMiss["wy_${song.rid}"] == null) {
+            try {
+                // 带上已知时长：EAPI 会用它识别「接口没标、实际只有 30 秒」的截断试听流
+                val u = NcmApi.playUrls(session, listOf(song.rid), mapOf(song.rid to song.duration))[song.rid]
+                    ?.takeIf { it.isNotBlank() }
+                // 拿到了语义上的「没链接」才可缓存；异常（超时/风控）不进负缓存
+                cacheableMiss = u == null
+                u
+            } catch (e: Exception) {
+                null
+            }
+        } else {
             null
         }
-        if (wyUrl != null && wyUrl.isNotBlank()) return wyUrl
-        // 网易没发链接 → 按「歌名 + 歌手」去酷我匹配同一首（带核对，不再盲取搜索第一条）
-        return matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }
+        if (wyUrl != null) return wyUrl
+        if (cacheableMiss) wyUrlMiss.put("wy_${song.rid}", true, WY_MISS_TTL_MS)
+        // 没拿到链接 → 转酷我按「歌名 + 歌手」核对同一首；酷我也没有 → lx 兜底
+        matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
+        return lxFallback(toMatchTrack(song))
+    }
+
+    /** lx 兜底：酷我按名字找不到时，在启用的 lx 脚本里再核对一遍（同一套 SongMatcher 三重核对） */
+    private suspend fun lxFallback(track: QsTrack): String? =
+        lxManager.matchLx(track)?.let { lxManager.playUrl(it, lxQuality()) }
+
+    /** lx 脚本的音质档位（对齐网易音质选择；自动 = 320k） */
+    private fun lxQuality(): String = when (session.qualityLevel()) {
+        com.whale.music.ncm.NcmLevel.STANDARD -> "128k"
+        com.whale.music.ncm.NcmLevel.HIGHER -> "192k"
+        com.whale.music.ncm.NcmLevel.EXHIGH -> "320k"
+        com.whale.music.ncm.NcmLevel.LOSSLESS -> "flac"
+        com.whale.music.ncm.NcmLevel.HIRES -> "hires"
+        null -> "320k"
     }
 
     /** 把在线歌单里的一首歌转成检索用的曲目形态（匹配缓存 key 用 songId） */
@@ -156,8 +198,12 @@ class RemoteMusicController @Inject constructor(
         artist = s.artist,
         album = s.album,
         duration = s.duration,
-        // 网络歌标记：酷我 -1 / 网易 -2，播放器按此区分收藏写哪张表
-        albumId = if (s.source == "wy") ALBUM_ID_WY else ALBUM_ID_KW,
+        // 网络歌标记：酷我 -1 / 网易 -2 / lx -3，播放器按此区分收藏写哪张表
+        albumId = when (s.source) {
+            "wy" -> ALBUM_ID_WY
+            "lx" -> ALBUM_ID_LX
+            else -> ALBUM_ID_KW
+        },
         uri = url
     )
 
@@ -246,27 +292,13 @@ class RemoteMusicController @Inject constructor(
     }
 
     /**
-     * 歌单加载完之后，在后台先把前几首匹配好。
-     * 这样用户点到时只剩「取直链」一步，不会觉得点了没反应。
-     */
-    suspend fun prefetchQishui(tracks: List<QsTrack>) = withContext(Dispatchers.IO) {
-        val pending = tracks.take(8).filter {
-            ncmIdOf(it.id) == null && !kwMatchCache.containsKey(it.id) && it.id !in kwMissCache
-        }
-        if (pending.isEmpty()) return@withContext
-        pending.chunked(4).forEach { chunk ->
-            chunk.map { t -> async { matchKw(t) } }.awaitAll()
-        }
-    }
-
-    /**
      * 曲目 → 可播放的源曲目。
      *
      * 带网易真实 id 的（同步红心 / 链接导入 / 启动推荐）直接按 id 走网易源 ——
      * id 对上了就是同一首歌，不存在「按名字找错歌」；
      * 其余（汽水 / QQ / 纯元数据行）才按「歌名 + 歌手」核对匹配酷我。
      */
-    private fun resolveTrack(track: QsTrack): RemoteSong? {
+    private suspend fun resolveTrack(track: QsTrack): RemoteSong? {
         ncmIdOf(track.id)?.let { rid ->
             return RemoteSong(
                 songId = "wy_$rid",
@@ -279,7 +311,24 @@ class RemoteMusicController @Inject constructor(
                 duration = track.duration
             )
         }
-        return matchKw(track)
+        // lx 收藏 / 自建歌单行：key 形如 lx_<rid>，直接按 lx 源回放
+        track.id.removePrefix("remote_").takeIf { it.startsWith("lx_") }?.let { k ->
+            val rid = k.removePrefix("lx_").toLongOrNull()
+            if (rid != null && rid > 0) {
+                return RemoteSong(
+                    songId = k,
+                    source = "lx",
+                    rid = rid,
+                    title = track.title,
+                    artist = track.artist,
+                    album = track.album,
+                    coverUrl = track.cover,
+                    duration = track.duration
+                )
+            }
+        }
+        // 酷我优先；酷我按名字找不到 → lx 脚本音源兜底
+        return matchKw(track) ?: lxManager.matchLx(track)
     }
 
     /**
@@ -337,130 +386,31 @@ class RemoteMusicController @Inject constructor(
         }
 
         // 三级检索：歌名+歌手 → 只搜歌名 → 去掉括号后缀再搜
-        // 导入歌单里带 "feat." / "(Live)" / 中文书名号的很多，一轮搜不到很常见；
-        // 歌手是「未知歌手」这类占位词时不进检索词，免得污染搜索结果
-        val wantArtist = track.artist.takeIf { meaningfulArtist(it) }.orEmpty()
-        val queries = buildList {
-            if (wantArtist.isNotBlank()) add("${track.title} $wantArtist".trim())
-            if (track.title.isNotBlank()) add(track.title)
-            val bare = track.title.replace(Regex("[(（\\[【].*?[)）\\]】]"), "").trim()
-            if (bare.isNotBlank() && bare != track.title) {
-                add(if (wantArtist.isNotBlank()) "$bare $wantArtist" else bare)
-            }
-        }.distinct()
-
+        // 导入歌单里带 "feat." / "(Live)" / 中文书名号的很多，一轮搜不到很常见。
+        // 打分与淘汰规则全在 SongMatcher（纯函数，可单测）
         var best: RemoteSong? = null
         var bestScore = Int.MIN_VALUE
-        for (q in queries) {
+        for (q in SongMatcher.queries(track)) {
             val hits = try {
                 KwSource.search(q, pageSize = 8)
             } catch (e: Exception) {
                 emptyList()
             }
             for (h in hits) {
-                val s = score(h, track)
+                val s = SongMatcher.score(h, track)
                 if (s > bestScore) {
                     bestScore = s
                     best = h
                 }
             }
             // 已经找到「歌名完全一致」的候选，没必要再降级检索
-            if (bestScore >= 40) break
+            if (bestScore >= SongMatcher.EXACT_TITLE_SCORE) break
         }
 
-        // 低于 20 = 歌名只是「有点像」，宁可不播也不播成别的歌
-        val result = if (bestScore >= 20) best else null
+        // 低于阈值 = 歌名只是「有点像」，宁可不播也不播成别的歌
+        val result = best?.takeIf { bestScore >= SongMatcher.ACCEPT_MIN_SCORE }
         if (result != null) kwMatchCache[track.id] = result else kwMissCache += track.id
         return result
-    }
-
-    /**
-     * 候选打分。判断依据依次是：歌名一致度、是否带版本后缀、歌手核对、时长接近度。
-     *
-     * 关键规则：两边歌手都能识别时必须对得上 —— 同名不同歌手的候选直接淘汰
-     * （-1），不再靠 +15/+26 这种加分去“追回来”。只有歌手一侧缺失
-     * （网页兜底的「未知歌手」、酷我没回歌手）才退回歌名 + 时长判断。
-     */
-    private fun score(hit: RemoteSong, track: QsTrack): Int {
-        val ht = normalizeTitle(hit.title)
-        val wt = normalizeTitle(track.title)
-        if (ht.isEmpty() || wt.isEmpty()) return -1
-
-        // 歌手核对：能核对就必须一致，否则再像也不要
-        val wantArtists = splitArtists(track.artist)
-        val hitArtists = splitArtists(hit.artist)
-        val artistCheckable = wantArtists.isNotEmpty() && hitArtists.isNotEmpty()
-        if (artistCheckable && !artistsOverlap(hit.artist, wantArtists)) return -1
-
-        var s = when {
-            ht == wt -> 40
-            ht.contains(wt) || wt.contains(ht) -> 20
-            similar(ht, wt) -> 6
-            else -> return -1
-        }
-
-        // 原样标题（没有括号后缀）更可信
-        if (hit.title.trim() == track.title.trim()) s += 15
-
-        // 原版没标 Live / 伴奏，候选标了，扣分
-        val trackHasTag = track.title.contains("live", true) || track.title.contains("伴奏")
-        if (!trackHasTag) {
-            if (hit.title.contains("live", true)) s -= 14
-            if (hit.title.contains("伴奏") || hit.title.contains("instrumental", true)) s -= 24
-            if (hit.title.contains("翻唱") || hit.title.contains("cover", true)) s -= 8
-            if (hit.title.contains("remix", true) && !track.title.contains("remix", true)) s -= 10
-        }
-
-        // 歌手（能核对的已在上面强制通过；核对不了的不加不减）
-        if (artistCheckable) {
-            s += if (normalizeTitle(hit.artist) == normalizeTitle(track.artist)) 26 else 12
-        }
-
-        // 时长
-        if (track.duration > 0 && hit.duration > 0) {
-            val diff = kotlin.math.abs(hit.duration - track.duration)
-            s += when {
-                diff < 3_000 -> 22
-                diff < 10_000 -> 10
-                diff > 30_000 -> -18
-                else -> 0
-            }
-        }
-        return s
-    }
-
-    /** 歌手字段是否可用于核对（空 / 占位词不算数） */
-    private fun meaningfulArtist(raw: String): Boolean {
-        val n = normalizeTitle(raw)
-        if (n.isEmpty()) return false
-        return n !in PLACEHOLDER_ARTISTS
-    }
-
-    private fun splitArtists(raw: String): List<String> =
-        raw.split('/', '&', ',', '、', '，')
-            .map { normalizeTitle(it) }
-            .filter { meaningfulArtist(it) }
-
-    /** 粗糙的字符串相似度：短串的字符有六成能在长串里找到就算像 */
-    private fun similar(a: String, b: String): Boolean {
-        if (a.isEmpty() || b.isEmpty()) return false
-        val short = if (a.length <= b.length) a else b
-        val long = if (a.length <= b.length) b else a
-        var hit = 0
-        for (c in short) if (long.contains(c)) hit++
-        return hit.toFloat() / short.length >= 0.6f
-    }
-
-    /** 去掉括号里的版本说明、标点与空白，只留主标题 */
-    private fun normalizeTitle(raw: String): String = raw
-        .replace(Regex("[(（\\[【].*?[)）\\]】]"), "")
-        .replace(Regex("[\\s\\-—_·,，.。'\"“”‘’!！?？]"), "")
-        .lowercase()
-
-    private fun artistsOverlap(kwArtist: String, want: List<String>): Boolean {
-        if (want.isEmpty()) return true
-        val have = splitArtists(kwArtist)
-        return have.any { h -> want.any { w -> h.contains(w) || w.contains(h) } }
     }
 
     companion object {
@@ -470,11 +420,11 @@ class RemoteMusicController @Inject constructor(
         /** 播放中歌曲的 albumId 标记：网易来源（rid 是网易 id，收藏/加歌单要按 wy 建键） */
         const val ALBUM_ID_WY = -2L
 
-        /** 不能用来核对身份的歌手占位词（normalize 后的形态） */
-        private val PLACEHOLDER_ARTISTS = setOf(
-            "未知歌手", "未知", "unknown", "unknownartist", "variousartists",
-            "群星", "多位歌手", "多歌手", "不详", "佚名", "不明确"
-        )
+        /** 播放中歌曲的 albumId 标记：lx 自定义音源（rid 是脚本条目的稳定哈希） */
+        const val ALBUM_ID_LX = -3L
+
+        /** 网易取流负缓存 TTL：同一首 10 分钟内不再打网易 */
+        private const val WY_MISS_TTL_MS = 10 * 60_000L
     }
 
     private fun coversOf(s: RemoteSong): Map<String, String> =
@@ -487,7 +437,8 @@ class RemoteMusicController @Inject constructor(
     suspend fun download(song: RemoteSong): String? = withContext(Dispatchers.IO) {
         // 网易源优先走官方下载接口：按档位点单（会员落无损 flac），比播放流稳；
         // 拿不到完整地址就回落原有的「播放链接」通道，保证照样能下。
-        val direct = if (song.source != "kw") {
+        // lx 源不走网易接口（rid 体系不同），直接走播放链接通道。
+        val direct = if (song.source == "wy") {
             runCatching {
                 // 下载档位跟用户选的一致：选了无损就下 flac，选 128k 就下 128k
                 NcmEapi.downloadUrl(

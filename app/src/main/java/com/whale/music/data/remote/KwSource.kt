@@ -63,7 +63,29 @@ object KwSource {
 
     // ───────── 搜索 ─────────
 
+    /** 查询词级缓存：同一轮批量匹配里相同查询只打一次接口（含「搜不到」的负缓存） */
+    private val searchCache = com.whale.music.util.TtlCache<List<RemoteSong>>(maxSize = 256)
+
+    /** 命中结果 10 分钟内直接复用；语义空结果记 2 小时，防止批量匹配反复打空查询 */
+    private const val SEARCH_HIT_TTL_MS = 10 * 60_000L
+    private const val SEARCH_MISS_TTL_MS = 2 * 60 * 60_000L
+
+    /** 清搜索缓存（设置页「清理缓存」用） */
+    fun clearCaches() = searchCache.clear()
+
     fun search(keyword: String, page: Int = 1, pageSize: Int = 30): List<RemoteSong> {
+        val key = "$page|$pageSize|$keyword"
+        searchCache.get(key)?.let { return it }
+        // 网络异常原样抛出、不进缓存：一次抖动不该把结果封死到过期为止
+        val result = searchUncached(keyword, page, pageSize)
+        searchCache.put(
+            key, result,
+            if (result.isEmpty()) SEARCH_MISS_TTL_MS else SEARCH_HIT_TTL_MS
+        )
+        return result
+    }
+
+    private fun searchUncached(keyword: String, page: Int, pageSize: Int): List<RemoteSong> {
         val enc = URLEncoder.encode(keyword, "UTF-8")
         val url = "https://www.kuwo.cn/search/searchMusicBykeyWord?vipver=1&client=kt&ft=music" +
             "&cluster=0&strategy=2012&encoding=utf8&rformat=json&mobi=1&issubtitle=1" +

@@ -9,25 +9,89 @@ import java.net.URLEncoder
 data class LyricLine(val timeMs: Long, val text: String)
 
 /**
- * 歌词源 — 按「歌名 + 歌手」检索网易（匿名可用），LRC 解析 + 内存缓存
- * 本地歌曲、在线歌曲通用
+ * 歌词源 — 按「歌名 + 歌手」检索网易（匿名可用），LRC 解析 + 内存缓存 + 磁盘哨兵
+ * 本地歌曲、在线歌曲通用。
+ *
+ * 负缓存策略（Sonance 同款防限流）：
+ * - 「搜不到 / 没歌词」写**空哨兵文件**，TTL 内不再打接口；
+ * - 网络异常（超时 / 风控）**不写缓存**，下次照常重试；
+ * - 有歌词的命中记 30 天。
  */
 object LyricSource {
 
-    private val cache = HashMap<String, List<LyricLine>>()
+    private val memory = HashMap<String, List<LyricLine>>()
+
+    /** 磁盘哨兵目录（OHMusicApp 启动时挂上；没挂就只用内存缓存） */
+    @Volatile
+    private var diskDir: java.io.File? = null
+
+    private const val DISK_HIT_TTL_MS = 30L * 24 * 3600_000
+    private const val DISK_MISS_TTL_MS = 2L * 24 * 3600_000
+
+    fun attachCacheDir(cacheRoot: java.io.File) {
+        diskDir = java.io.File(cacheRoot, "lyrics")
+    }
+
+    /** 清歌词缓存（设置页「清理缓存」用） */
+    fun clearCache() {
+        memory.clear()
+        val dir = diskDir ?: return
+        try {
+            dir.listFiles()?.forEach { it.delete() }
+        } catch (_: Exception) {
+        }
+    }
 
     suspend fun load(title: String, artist: String): List<LyricLine> = withContext(Dispatchers.IO) {
         val key = "$title|$artist"
-        cache[key]?.let { return@withContext it }
-        val lines = try {
-            val sid = searchSongId("$title $artist") ?: return@withContext emptyList()
-            val lrc = fetchLyric(sid)
-            parseLrc(lrc)
-        } catch (e: Exception) {
-            emptyList()
+        memory[key]?.let { return@withContext it }
+        readDisk(key)?.let { raw ->
+            return@withContext parseLrc(raw).also { memory[key] = it }
         }
-        cache[key] = lines
-        lines
+        // null = 传输失败（不缓存，下次还试）；"" = 语义空结果（写哨兵）
+        val raw = try {
+            val sid = searchSongId("$title $artist")
+            if (sid == null) "" else fetchLyric(sid)
+        } catch (e: Exception) {
+            null
+        } ?: return@withContext emptyList()
+        writeDisk(key, raw)
+        parseLrc(raw).also { memory[key] = it }
+    }
+
+    private fun fileFor(key: String): java.io.File? {
+        val dir = diskDir ?: return null
+        val digest = java.security.MessageDigest.getInstance("SHA-1")
+            .digest(key.toByteArray(Charsets.UTF_8))
+        val name = digest.joinToString("") { "%02x".format(it) }
+        return java.io.File(dir, "$name.lrc")
+    }
+
+    /** 返回磁盘上的歌词原文；null = 没有或已过期（过期顺手删掉）；"" = 空哨兵 */
+    private fun readDisk(key: String): String? {
+        val f = fileFor(key) ?: return null
+        if (!f.exists()) return null
+        val age = System.currentTimeMillis() - f.lastModified()
+        val ttl = if (f.length() > 0) DISK_HIT_TTL_MS else DISK_MISS_TTL_MS
+        if (age >= ttl) {
+            f.delete()
+            return null
+        }
+        return try {
+            f.readText()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun writeDisk(key: String, raw: String) {
+        val f = fileFor(key) ?: return
+        try {
+            f.parentFile?.mkdirs()
+            f.writeText(raw)
+        } catch (e: Exception) {
+            runCatching { f.delete() }
+        }
     }
 
     private fun searchSongId(keyword: String): Long? {
