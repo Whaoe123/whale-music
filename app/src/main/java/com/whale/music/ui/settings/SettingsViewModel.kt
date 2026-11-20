@@ -35,12 +35,25 @@ class SettingsViewModel @Inject constructor(
         memory.autoplayEnabled = enabled
     }
 
-    /** 导入 lx 脚本；返回 null = 成功，否则是给用户看的原因 */
+    /** 导入 lx 脚本（本地文件）；返回 null = 成功，否则是给用户看的原因 */
     suspend fun importLx(uri: Uri): String? = lxManager.importFrom(uri)
+
+    /** 从直链在线导入 lx 脚本；返回 null = 成功 */
+    suspend fun importLxFromUrl(url: String): String? = lxManager.importFromUrl(url)
 
     fun setLxEnabled(id: String, enabled: Boolean) = lxManager.setEnabled(id, enabled)
 
     fun deleteLx(id: String) = lxManager.delete(id)
+
+    // ───────── Hi·Res 金标（DisplayPrefs：StateFlow，播放页实时生效） ─────────
+
+    val hiresEnabled = com.whale.music.util.DisplayPrefs.hiresEnabled
+    val hiresScale = com.whale.music.util.DisplayPrefs.hiresScale
+
+    fun setHiresEnabled(enabled: Boolean) =
+        com.whale.music.util.DisplayPrefs.setHiresEnabled(enabled)
+
+    fun setHiresScale(scale: Float) = com.whale.music.util.DisplayPrefs.setHiresScale(scale)
 
     /**
      * 清理各类缓存：播放取址 / 歌词（含磁盘哨兵）/ 酷我搜索查询词 / lx 匹配。

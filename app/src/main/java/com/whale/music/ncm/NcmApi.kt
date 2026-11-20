@@ -562,6 +562,67 @@ object NcmApi {
         return result
     }
 
+    // ───────── 发现页：我的云歌单 / 私人FM / 歌单搜索 ─────────
+
+    /** 发现页用的歌单卡片（我的云歌单 / 歌单搜索共用） */
+    data class NcmPlaylistCard(
+        val id: Long,
+        val name: String,
+        val coverUrl: String,
+        val trackCount: Int
+    )
+
+    /** 我的云歌单（登录态）—— 发现页「我的云歌单」行 */
+    suspend fun userPlaylists(session: NcmSession, limit: Int = 30): List<NcmPlaylistCard> {
+        val uid = session.profile.value?.userId ?: return emptyList()
+        val json = NcmHttp.get(
+            "$BASE/api/user/playlist?uid=$uid&limit=$limit&offset=0",
+            session.cookieHeader()
+        )
+        return parsePlaylistCards(json.optJSONArray("playlist"))
+    }
+
+    /** 歌单搜索（type=1000）—— 发现页搜索的「歌单」tab */
+    suspend fun searchPlaylists(session: NcmSession, keyword: String, limit: Int = 20): List<NcmPlaylistCard> {
+        val json = NcmHttp.get(
+            "$BASE/api/search/get/web?s=" + URLEncoder.encode(keyword, "UTF-8") +
+                "&type=1000&limit=$limit",
+            session.cookieHeader()
+        )
+        return parsePlaylistCards(json.optJSONObject("result")?.optJSONArray("playlists"))
+    }
+
+    private fun parsePlaylistCards(arr: JSONArray?): List<NcmPlaylistCard> {
+        if (arr == null) return emptyList()
+        val out = mutableListOf<NcmPlaylistCard>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optLong("id")
+            if (id <= 0L) continue
+            out += NcmPlaylistCard(
+                id = id,
+                name = o.optString("name"),
+                coverUrl = o.optString("coverImgUrl"),
+                trackCount = o.optInt("trackCount")
+            )
+        }
+        return out
+    }
+
+    /**
+     * 私人FM 一批歌（登录态）—— 发现页「私人FM」卡。
+     * 拿不到（未登录 / 风控）返回空，调用方提示。
+     */
+    suspend fun personalFm(session: NcmSession): List<NcmSongDto> {
+        val json = NcmHttp.get("$BASE/api/v1/radio/get", session.cookieHeader())
+        val arr = json.optJSONArray("data") ?: return emptyList()
+        val result = mutableListOf<NcmSongDto>()
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.let { parseSong(it) }?.let { result.add(it) }
+        }
+        return result
+    }
+
     // ───────── 红心回写 ─────────
 
     /** 点赞/取消点赞；返回是否成功 */

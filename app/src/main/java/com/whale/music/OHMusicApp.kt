@@ -4,6 +4,7 @@ import android.app.Application
 import com.whale.music.data.remote.LyricSource
 import com.whale.music.util.CoverResolver
 import com.whale.music.util.CrashGuard
+import com.whale.music.util.DisplayPrefs
 import dagger.hilt.android.HiltAndroidApp
 
 @HiltAndroidApp
@@ -14,5 +15,7 @@ class OHMusicApp : Application() {
         CoverResolver.init(this)
         // 歌词磁盘哨兵缓存（防重复打网易接口）
         LyricSource.attachCacheDir(cacheDir)
+        // 展示偏好（Hi·Res 金标开关 / 大小）
+        DisplayPrefs.init(this)
     }
 }

@@ -2,9 +2,12 @@ package com.whale.music.ui.settings
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -21,7 +24,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -35,12 +42,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import com.whale.music.R
 import com.whale.music.ncm.NcmLevel
 import com.whale.music.ui.player.PlayerViewModel
 import com.whale.music.update.UpdateViewModel
@@ -65,18 +80,51 @@ fun SettingsScreen(
 
     var quality by remember { mutableStateOf(playerVm.qualityLevel()) }
     var autoplay by remember { mutableStateOf(viewModel.autoplayEnabled()) }
+    // Hi·Res 金标（DisplayPrefs StateFlow，改完播放页立刻生效）
+    val hiresEnabled by viewModel.hiresEnabled.collectAsState()
+    val hiresScale by viewModel.hiresScale.collectAsState()
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .verticalScroll(rememberScrollState())
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 20.dp)
-            // 底部给迷你条 + 底部导航让位（与发现页一致）
-            .padding(bottom = 170.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // ── 材质背景：与发现页 / 曲库同一套「封面模糊 + 暗色遮罩」 ──
+        val artwork by playerVm.artwork.collectAsState()
+        Crossfade(
+            targetState = artwork,
+            animationSpec = tween(1200),
+            label = "settings_bg"
+        ) { uri ->
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(uri)
+                    .size(512, 512)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(64.dp),
+                contentScale = ContentScale.Crop,
+                colorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(2.0f) }),
+                alpha = 0.9f,
+                placeholder = painterResource(R.drawable.default_album_art),
+                error = painterResource(R.drawable.default_album_art),
+                fallback = painterResource(R.drawable.default_album_art)
+            )
+        }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 20.dp)
+                // 底部给迷你条 + 底部导航让位（与发现页一致）
+                .padding(bottom = 170.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         Spacer(Modifier.height(6.dp))
         Text(
             "设置",
@@ -121,6 +169,57 @@ fun SettingsScreen(
                         checkedTrackColor = Color(0xFF60A5FA),
                         uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
                         uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
+                    )
+                )
+            }
+        }
+
+        // ───────── 封面金标（Hi·Res 徽章开关 + 大小） ─────────
+        SettingsCard(title = "封面金标") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Hi·Res 金标", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "高音质歌曲在播放页封面下方点亮金色徽章",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = hiresEnabled,
+                    onCheckedChange = { viewModel.setHiresEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Color(0xFF60A5FA),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
+                    )
+                )
+            }
+            if (hiresEnabled) {
+                Spacer(Modifier.height(10.dp))
+                SettingsDivider()
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "大小",
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "${"%.2f".format(hiresScale)}×",
+                        color = Color(0xFF60A5FA),
+                        fontSize = 13.sp
+                    )
+                }
+                Slider(
+                    value = hiresScale,
+                    onValueChange = { viewModel.setHiresScale(it) },
+                    valueRange = 0.7f..1.4f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF60A5FA),
+                        activeTrackColor = Color(0xFF60A5FA),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.15f)
                     )
                 )
             }
@@ -202,6 +301,7 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(8.dp))
+        }
     }
 }
 
@@ -250,6 +350,9 @@ private fun LxSourceSection(viewModel: SettingsViewModel) {
     val scripts by viewModel.lxScripts.collectAsState()
     var importing by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
+    // 从直链在线导入
+    var scriptUrl by remember { mutableStateOf("") }
+    var urlImporting by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -317,13 +420,66 @@ private fun LxSourceSection(viewModel: SettingsViewModel) {
             Text(it, color = Color(0xFF60A5FA), fontSize = 12.sp, lineHeight = 17.sp)
         }
         Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             TextButton(
                 enabled = !importing,
                 onClick = { picker.launch(arrayOf("*/*")) }
             ) {
                 Text(
-                    if (importing) "导入中…" else "导入音源脚本",
+                    if (importing) "导入中…" else "从文件导入",
+                    color = Color(0xFF60A5FA),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // 从直链在线导入（洛雪脚本常见 .js 直链）
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = scriptUrl,
+                onValueChange = { scriptUrl = it },
+                placeholder = {
+                    Text(
+                        "音源脚本直链 https://…",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.35f)
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White.copy(alpha = 0.85f),
+                    focusedBorderColor = Color(0xFF60A5FA),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.18f),
+                    cursorColor = Color.White,
+                    focusedContainerColor = Color.White.copy(alpha = 0.06f),
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.06f)
+                )
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(
+                enabled = !urlImporting && scriptUrl.isNotBlank(),
+                onClick = {
+                    urlImporting = true
+                    scope.launch {
+                        val err = withContext(Dispatchers.IO) {
+                            viewModel.importLxFromUrl(scriptUrl)
+                        }
+                        urlImporting = false
+                        msg = err ?: "音源已导入，搜索与兜底播放立即可用"
+                        if (err == null) scriptUrl = ""
+                    }
+                }
+            ) {
+                Text(
+                    if (urlImporting) "导入中…" else "链接导入",
                     color = Color(0xFF60A5FA),
                     fontWeight = FontWeight.Bold
                 )

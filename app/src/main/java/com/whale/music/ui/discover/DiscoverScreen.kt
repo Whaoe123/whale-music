@@ -13,6 +13,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -38,8 +40,10 @@ import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -215,18 +219,25 @@ fun DiscoverScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Whale-网易云",
+                            text = if (ncmLogin == NcmLoginState.LOGGED_IN &&
+                                !ncmProfile?.nickname.isNullOrBlank()
+                            ) {
+                                "你好，${ncmProfile?.nickname}"
+                            } else {
+                                "你好"
+                            },
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = if (ncmLogin == NcmLoginState.LOGGED_IN) {
-                                "已登录 · 为你挑歌"
+                                "搜索并播放网络歌曲 · 为你挑歌"
                             } else {
-                                "登录后推荐更准，点歌名即播"
+                                "搜索并播放网络歌曲 · 登录后更懂你"
                             },
                             fontSize = 11.sp,
                             color = Color.White.copy(alpha = 0.42f)
@@ -275,8 +286,36 @@ fun DiscoverScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // ── 搜索框（点顶栏搜索按钮展开）──
+                // ── 搜索区（点顶栏搜索按钮展开）：单曲 / 歌单 两个 tab ──
                 if (searchMode) {
+                    // tab 药丸：单曲（酷我 / lx 音源）· 歌单（网易云）
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("song" to "单曲", "playlist" to "歌单").forEach { (tab, label) ->
+                            val selected = uiState.searchTab == tab
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(
+                                        if (selected) Color.White.copy(alpha = 0.16f)
+                                        else Color.White.copy(alpha = 0.07f)
+                                    )
+                                    .clickable { viewModel.setSearchTab(tab) }
+                                    .padding(horizontal = 16.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    label,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                                    color = if (selected) Color.White
+                                    else Color.White.copy(alpha = 0.55f)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     DiscoverSearchBar(
                         query = uiState.query,
                         onQueryChange = viewModel::onQueryChange,
@@ -286,37 +325,39 @@ fun DiscoverScreen(
                             viewModel.clearSearch()
                         }
                     )
-                    // ── 音源切换：酷我 / 已导入的 lx 脚本（只有一个音源时不摆出来）──
-                    val sources = buildList {
-                        add("kw" to "酷我")
-                        lxScripts.filter { it.enabled }.forEach { add("lx:${it.id}" to it.name) }
-                    }
-                    if (sources.size > 1) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            sources.forEach { (id, label) ->
-                                val selected = uiState.searchSource == id
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .background(
-                                            if (selected) Color(0xFF60A5FA).copy(alpha = 0.30f)
-                                            else Color.White.copy(alpha = 0.10f)
+                    // ── 音源切换（仅单曲 tab）：酷我 / 已导入的 lx 脚本 ──
+                    if (uiState.searchTab == "song") {
+                        val sources = buildList {
+                            add("kw" to "酷我")
+                            lxScripts.filter { it.enabled }.forEach { add("lx:${it.id}" to it.name) }
+                        }
+                        if (sources.size > 1) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                sources.forEach { (id, label) ->
+                                    val selected = uiState.searchSource == id
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .background(
+                                                if (selected) Color(0xFF60A5FA).copy(alpha = 0.30f)
+                                                else Color.White.copy(alpha = 0.10f)
+                                            )
+                                            .clickable { viewModel.setSearchSource(id) }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            label,
+                                            fontSize = 12.sp,
+                                            color = if (selected) Color(0xFF93C5FD)
+                                            else Color.White.copy(alpha = 0.7f)
                                         )
-                                        .clickable { viewModel.setSearchSource(id) }
-                                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        label,
-                                        fontSize = 12.sp,
-                                        color = if (selected) Color(0xFF93C5FD)
-                                        else Color.White.copy(alpha = 0.7f)
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -346,6 +387,28 @@ fun DiscoverScreen(
                                         strokeWidth = 2.dp
                                     )
                                 }
+                            }
+                        } else if (uiState.searchTab == "playlist") {
+                            // ── 歌单 tab：网易云歌单搜索结果 ──
+                            val pls = uiState.playlistResults.orEmpty()
+                            if (pls.isEmpty()) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(100.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            "没搜到相关歌单",
+                                            fontSize = 13.sp,
+                                            color = Color.White.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                }
+                            }
+                            items(pls, key = { "pl_${it.id}" }) { pl ->
+                                PlaylistResultRow(playlist = pl) { viewModel.openPlaylist(pl) }
                             }
                         } else {
                             val results = uiState.searchResults.orEmpty()
@@ -400,23 +463,87 @@ fun DiscoverScreen(
                             .fillMaxWidth()
                             .weight(1f),
                         contentPadding = PaddingValues(bottom = BOTTOM_RESERVE),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        // ── hero 三卡：每日私人推荐 / 我喜欢 / 私人FM ──
                         item {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                contentPadding = PaddingValues(horizontal = 20.dp)
-                            ) {
-                                items(uiState.playlists, key = { it.id }) { pl ->
-                                    PlaylistCard(
-                                        playlist = pl,
-                                        onClick = { viewModel.openPlaylist(pl) }
-                                    )
+                            DiscoverHeroRow(
+                                recommend = uiState.recommend,
+                                personalized = uiState.personalized,
+                                likedCount = likedKeys.size,
+                                nickname = ncmProfile?.nickname.orEmpty(),
+                                resolving = uiState.resolving,
+                                onDaily = viewModel::playDaily,
+                                onLikes = viewModel::playMyLikes,
+                                onFm = viewModel::playPersonalFm
+                            )
+                        }
+
+                        // ── 我的云歌单（登录态才有）──
+                        if (uiState.myPlaylists.isNotEmpty()) {
+                            item { Spacer(Modifier.height(12.dp)) }
+                            item {
+                                SectionHeader(
+                                    title = "我的云歌单",
+                                    sub = "${uiState.myPlaylists.size} 个歌单"
+                                )
+                            }
+                            item {
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 20.dp)
+                                ) {
+                                    items(uiState.myPlaylists, key = { "mine_${it.id}" }) { pl ->
+                                        PlaylistCard(
+                                            playlist = pl,
+                                            onClick = { viewModel.openPlaylist(pl) }
+                                        )
+                                    }
                                 }
                             }
                         }
 
-                        item { Spacer(Modifier.height(18.dp)) }
+                        // ── 精选探索广场：四榜单磁贴 ──
+                        item { Spacer(Modifier.height(12.dp)) }
+                        item {
+                            SectionHeader(
+                                title = "精选探索广场",
+                                sub = "热歌榜 · 每日精选"
+                            )
+                        }
+                        item {
+                            ChartGrid(onOpen = viewModel::openChart)
+                        }
+
+                        // ── 精选歌单网格（封面 + 数量角标）──
+                        if (uiState.playlists.isNotEmpty()) {
+                            item { Spacer(Modifier.height(12.dp)) }
+                            item {
+                                SectionHeader(title = "精选歌单", sub = "按你的口味")
+                            }
+                            items(
+                                uiState.playlists.chunked(2),
+                                key = { row -> row.joinToString("_") { it.id.toString() } }
+                            ) { row ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 20.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    row.forEach { pl ->
+                                        PlaylistGridCard(
+                                            playlist = pl,
+                                            modifier = Modifier.weight(1f),
+                                            onClick = { viewModel.openPlaylist(pl) }
+                                        )
+                                    }
+                                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+
+                        item { Spacer(Modifier.height(14.dp)) }
 
                         item {
                             Row(
@@ -777,6 +904,407 @@ private fun DiscoverSearchBar(
 }
 
 // ───────── 歌单卡片（横向流，尺寸同第二页 108dp） ─────────
+
+// ───────── 发现页 hero 三卡：每日私人推荐 / 我喜欢 / 私人FM ─────────
+
+@Composable
+private fun DiscoverHeroRow(
+    recommend: List<RemoteSong>,
+    personalized: Boolean,
+    likedCount: Int,
+    nickname: String,
+    resolving: Boolean,
+    onDaily: () -> Unit,
+    onLikes: () -> Unit,
+    onFm: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 大卡：每日私人推荐（首曲封面做底 + 渐变压暗）
+        Box(
+            modifier = Modifier
+                .weight(1.7f)
+                .height(168.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.White.copy(alpha = 0.07f))
+                .clickable(enabled = !resolving, onClick = onDaily)
+        ) {
+            recommend.firstOrNull()?.coverUrl?.let { cover ->
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(cover)
+                        .size(400, 400)
+                        .build(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    placeholder = painterResource(R.drawable.default_album_art),
+                    error = painterResource(R.drawable.default_album_art),
+                    fallback = painterResource(R.drawable.default_album_art)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = 0.05f),
+                                    Color.Black.copy(alpha = 0.78f)
+                                )
+                            )
+                        )
+                )
+            }
+            Column(modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)) {
+                Text(
+                    text = if (personalized) "每日私人推荐" else "每日推荐",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = buildString {
+                        append("${recommend.size} 首")
+                        if (personalized && nickname.isNotBlank()) append(" · $nickname")
+                    },
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.7f)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(14.dp)
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.92f))
+                    .clickable(enabled = !resolving, onClick = onDaily),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "播放",
+                    tint = Color(0xFF141414),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        // 右侧两小卡：我喜欢 / 私人FM
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .height(168.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF3A2E63), Color(0xFF6D5BA8))
+                        )
+                    )
+                    .clickable(enabled = !resolving, onClick = onLikes)
+            ) {
+                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 14.dp)) {
+                    Text(
+                        text = "我喜欢",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "$likedCount 首红心",
+                        fontSize = 10.5.sp,
+                        color = Color.White.copy(alpha = 0.72f)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 12.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF4C8DFF).copy(alpha = 0.9f))
+                        .clickable(enabled = !resolving, onClick = onLikes)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "心动",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color(0xFF1F4E63), Color(0xFF2E8B8B))
+                        )
+                    )
+                    .clickable(enabled = !resolving, onClick = onFm)
+            ) {
+                Column(modifier = Modifier.align(Alignment.CenterStart).padding(start = 14.dp)) {
+                    Text(
+                        text = "FM RADIO",
+                        fontSize = 9.sp,
+                        letterSpacing = 1.5.sp,
+                        color = Color.White.copy(alpha = 0.65f)
+                    )
+                    Text(
+                        text = "私人FM",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "无尽漫游 · 顺耳电台",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.7f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ───────── 区块标题行 ─────────
+
+@Composable
+private fun SectionHeader(title: String, sub: String = "") {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier.weight(1f)
+        )
+        if (sub.isNotBlank()) {
+            Text(
+                text = sub,
+                fontSize = 11.sp,
+                color = Color.White.copy(alpha = 0.38f)
+            )
+        }
+    }
+}
+
+// ───────── 精选探索广场：四榜单磁贴 ─────────
+
+private data class ChartTile(
+    val id: Long,
+    val name: String,
+    val sub: String,
+    val icon: String,
+    val from: Color,
+    val to: Color
+)
+
+private val CHART_TILES = listOf(
+    ChartTile(19723756, "飙升榜", "TOP · 100 首", "飙升", Color(0xFF7C5CFF), Color(0xFFB794F6)),
+    ChartTile(3779629, "新歌榜", "TOP · 100 首", "新歌", Color(0xFF34C759), Color(0xFF8FE388)),
+    ChartTile(2884035, "原创榜", "TOP · 100 首", "原创", Color(0xFF3B82F6), Color(0xFF93C5FD)),
+    ChartTile(3778678, "热歌榜", "TOP · 200 首", "热歌", Color(0xFFFF4D6D), Color(0xFFFF9AA8))
+)
+
+@Composable
+private fun ChartGrid(onOpen: (Long, String) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        CHART_TILES.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                row.forEach { tile ->
+                    ChartTileCard(
+                        tile = tile,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onOpen(tile.id, tile.name) }
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChartTileCard(
+    tile: ChartTile,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.07f))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(Brush.linearGradient(listOf(tile.from, tile.to))),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = tile.icon,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(
+                text = tile.name,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color.White
+            )
+            Text(
+                text = tile.sub,
+                fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.4f)
+            )
+        }
+    }
+}
+
+// ───────── 精选歌单网格卡：封面 + 数量角标 + 标题 ─────────
+
+@Composable
+private fun PlaylistGridCard(
+    playlist: WyPlaylist,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(playlist.picUrl)
+                    .size(400, 400)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                placeholder = painterResource(R.drawable.default_album_art),
+                error = painterResource(R.drawable.default_album_art),
+                fallback = painterResource(R.drawable.default_album_art)
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 7.dp, vertical = 3.dp)
+            ) {
+                Text(
+                    text = "${playlist.trackCount} 首",
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.92f)
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = playlist.name,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            color = Color.White.copy(alpha = 0.8f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+// ───────── 歌单搜索结果行 ─────────
+
+@Composable
+private fun PlaylistResultRow(playlist: WyPlaylist, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(playlist.picUrl)
+                    .size(200, 200)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                placeholder = painterResource(R.drawable.default_album_art),
+                error = painterResource(R.drawable.default_album_art),
+                fallback = painterResource(R.drawable.default_album_art)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = playlist.name,
+                fontSize = 14.sp,
+                color = Color.White.copy(alpha = 0.9f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "${playlist.trackCount} 首歌单",
+                fontSize = 11.sp,
+                color = Color.White.copy(alpha = 0.4f)
+            )
+        }
+    }
+}
 
 @Composable
 private fun PlaylistCard(

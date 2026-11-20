@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -73,19 +74,55 @@ class LxSourceManager @Inject constructor(
             val text = context.contentResolver.openInputStream(uri)?.use {
                 it.readBytes().toString(Charsets.UTF_8)
             } ?: return@withContext "读不到文件"
-            if (!text.contains("musicUrl")) {
-                return@withContext "这不像洛雪音源脚本（没有 musicUrl 方法）"
-            }
-            val id = "s${System.currentTimeMillis().toString(36)}"
-            File(dir, "$id.js").writeText(text)
-            File(dir, "$id.meta").writeText(
-                JSONObject().put("name", name.removeSuffix(".js")).put("enabled", true).toString()
-            )
-            refreshList()
-            null
+            saveScript(name, text)
         } catch (e: Exception) {
             "导入失败：${e.message ?: "未知错误"}"
         }
+    }
+
+    /** 从直链在线导入（洛雪脚本常见分发方式是 .js 直链）；返回 null = 成功 */
+    suspend fun importFromUrl(url: String): String? = withContext(Dispatchers.IO) {
+        val u = url.trim()
+        if (!u.startsWith("http://") && !u.startsWith("https://")) {
+            return@withContext "只支持 http(s) 链接"
+        }
+        try {
+            val conn = (URL(u).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 20_000
+                instanceFollowRedirects = true
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                )
+            }
+            val text = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            conn.disconnect()
+            if (text.isBlank()) return@withContext "下载到的脚本是空的"
+            // 名字：脚本头 @name，没有就用链接文件名
+            val name = Regex("@name\\s+(.+)")
+                .find(text)?.groupValues?.get(1)?.trim()
+                ?: u.substringAfterLast('/').substringBefore('?')
+                    .removeSuffix(".js").ifBlank { "在线音源" }
+            saveScript(name, text)
+        } catch (e: Exception) {
+            "下载失败：${e.message ?: "网络异常"}"
+        }
+    }
+
+    /** 校验 + 落盘 + 刷新列表；返回 null = 成功 */
+    private fun saveScript(name: String, text: String): String? {
+        if (!text.contains("musicUrl")) {
+            return "这不像洛雪音源脚本（没有 musicUrl 方法）"
+        }
+        val id = "s${System.currentTimeMillis().toString(36)}"
+        File(dir, "$id.js").writeText(text)
+        File(dir, "$id.meta").writeText(
+            JSONObject().put("name", name.removeSuffix(".js")).put("enabled", true).toString()
+        )
+        refreshList()
+        return null
     }
 
     fun setEnabled(id: String, enabled: Boolean) {

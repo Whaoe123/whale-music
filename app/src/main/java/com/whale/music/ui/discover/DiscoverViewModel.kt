@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.whale.music.data.dao.RemoteSongDao
+import com.whale.music.data.model.QsTrack
 import com.whale.music.data.model.RemoteSong
 import com.whale.music.data.remote.KwSource
 import com.whale.music.data.remote.RemoteMusicController
@@ -44,11 +45,17 @@ data class DiscoverUiState(
     val recommend: List<RemoteSong> = emptyList(),
     val personalized: Boolean = false,
     val playlists: List<WyPlaylist> = emptyList(),
+    /** 我的云歌单（登录态），发现页横滑行 */
+    val myPlaylists: List<WyPlaylist> = emptyList(),
     val query: String = "",
     val searching: Boolean = false,
-    /** 搜索音源："kw" = 酷我；"lx:<scriptId>" = 洛雪自定义音源 */
+    /** 搜索 tab："song" = 单曲（酷我 / lx 音源）；"playlist" = 歌单（网易云） */
+    val searchTab: String = "song",
+    /** 音源切换："kw" = 酷我；"lx:<scriptId>" = 洛雪自定义音源 */
     val searchSource: String = "kw",
     val searchResults: List<RemoteSong>? = null,   // null = 非搜索态
+    /** 「歌单」tab 的搜索结果（与 searchResults 互斥） */
+    val playlistResults: List<WyPlaylist>? = null,
     val openedPlaylist: WyPlaylist? = null,
     val playlistSongs: List<RemoteSong> = emptyList(),
     val playlistLoading: Boolean = false,
@@ -122,11 +129,17 @@ class DiscoverViewModel @Inject constructor(
             val playlists = withContext(Dispatchers.IO) {
                 try { wyPersonalizedPlaylists() } catch (e: Exception) { emptyList() }
             }
+            // 我的云歌单（登录态才有；没登录就空着，UI 不摆这一行）
+            val mine = withContext(Dispatchers.IO) {
+                runCatching { NcmApi.userPlaylists(session) }.getOrDefault(emptyList())
+                    .map { WyPlaylist(it.id, it.name, it.coverUrl, it.trackCount) }
+            }
             _uiState.update {
                 it.copy(
                     loading = false,
                     recommend = recommend,
                     playlists = playlists,
+                    myPlaylists = mine,
                     personalized = session.hasCookies() && recommend.isNotEmpty(),
                     error = if (recommend.isEmpty() && playlists.isEmpty()) "内容加载失败，下拉重试" else null
                 )
@@ -220,28 +233,67 @@ class DiscoverViewModel @Inject constructor(
         _uiState.update { it.copy(query = q) }
         searchJob?.cancel()
         if (q.isBlank()) {
-            _uiState.update { it.copy(searchResults = null, searching = false) }
+            _uiState.update {
+                it.copy(searchResults = null, playlistResults = null, searching = false)
+            }
             return
         }
+        val tab = _uiState.value.searchTab
         val source = _uiState.value.searchSource
         searchJob = viewModelScope.launch {
             delay(400) // 防抖
             val seq = ++searchSeq
             _uiState.update { it.copy(searching = true) }
-            val results = withContext(Dispatchers.IO) {
-                try {
-                    if (source.startsWith("lx:")) {
-                        lxManager.search(q, source.removePrefix("lx:"), 30)
-                    } else {
-                        KwSource.search(q)
+            if (tab == "playlist") {
+                // 歌单 tab：网易云歌单搜索（匿名可读）
+                val results = withContext(Dispatchers.IO) {
+                    try {
+                        NcmApi.searchPlaylists(session, q)
+                            .map { WyPlaylist(it.id, it.name, it.coverUrl, it.trackCount) }
+                    } catch (e: Exception) {
+                        emptyList<WyPlaylist>()
                     }
-                } catch (e: Exception) {
-                    emptyList<RemoteSong>()
+                }
+                if (seq != searchSeq) return@launch
+                _uiState.update {
+                    it.copy(
+                        searching = false,
+                        searchResults = null,
+                        playlistResults = results
+                    )
+                }
+            } else {
+                val results = withContext(Dispatchers.IO) {
+                    try {
+                        if (source.startsWith("lx:")) {
+                            lxManager.search(q, source.removePrefix("lx:"), 30)
+                        } else {
+                            KwSource.search(q)
+                        }
+                    } catch (e: Exception) {
+                        emptyList<RemoteSong>()
+                    }
+                }
+                if (seq != searchSeq) return@launch // 已被更新请求取代
+                _uiState.update {
+                    it.copy(
+                        searching = false,
+                        searchResults = results,
+                        playlistResults = null
+                    )
                 }
             }
-            if (seq != searchSeq) return@launch // 已被更新请求取代
-            _uiState.update { it.copy(searching = false, searchResults = results) }
         }
+    }
+
+    /** 切换搜索 tab（单曲 / 歌单），当前关键词立即按新 tab 重搜 */
+    fun setSearchTab(tab: String) {
+        if (_uiState.value.searchTab == tab) return
+        _uiState.update {
+            it.copy(searchTab = tab, searchResults = null, playlistResults = null)
+        }
+        val q = _uiState.value.query
+        if (q.isNotBlank()) onQueryChange(q)
     }
 
     /** 切换搜索音源（酷我 / lx 脚本），当前关键词立即按新音源重搜 */
@@ -255,7 +307,14 @@ class DiscoverViewModel @Inject constructor(
     fun clearSearch() {
         searchJob?.cancel()
         searchSeq++
-        _uiState.update { it.copy(query = "", searchResults = null, searching = false) }
+        _uiState.update {
+            it.copy(
+                query = "",
+                searchResults = null,
+                playlistResults = null,
+                searching = false
+            )
+        }
     }
 
     // ───────── 歌单详情 ─────────
@@ -321,6 +380,75 @@ class DiscoverViewModel @Inject constructor(
                 it.copy(resolving = false, message = err ?: "开始播放「${song.title}」")
             }
         }
+    }
+
+    // ───────── 发现页 hero 三卡：日推 / 私人FM / 我喜欢 ─────────
+
+    /** 播放每日推荐整张 */
+    fun playDaily() {
+        val list = uiState.value.recommend
+        val first = list.firstOrNull()
+        if (first == null) {
+            _uiState.update { it.copy(message = "日推还没拉到，点右上角刷新试试") }
+            return
+        }
+        play(first, list)
+    }
+
+    /** 私人FM：登录态拉一批当队列 */
+    fun playPersonalFm() {
+        if (!session.hasCookies()) {
+            _uiState.update { it.copy(message = "登录网易云后才有私人FM") }
+            return
+        }
+        if (_uiState.value.resolving) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(resolving = true) }
+            val songs = withContext(Dispatchers.IO) {
+                runCatching { NcmApi.personalFm(session) }.getOrDefault(emptyList())
+                    .map { it.toRemoteSong() }
+            }
+            _uiState.update { it.copy(resolving = false) }
+            val first = songs.firstOrNull()
+            if (first == null) {
+                _uiState.update { it.copy(message = "私人FM 暂时拉不到，稍后再试") }
+            } else {
+                play(first, songs)
+            }
+        }
+    }
+
+    /** 我喜欢：红心歌单整张交给播放链路（本地 / 在线混合，与曲库同一套核对） */
+    fun playMyLikes() {
+        val rows = likedCatalog.rows.value
+        if (rows.isEmpty()) {
+            _uiState.update { it.copy(message = "红心还是空的，先去点几首喜欢的") }
+            return
+        }
+        val tracks = rows.map { row ->
+            QsTrack(
+                id = row.remoteSongId?.takeIf { it.isNotBlank() }
+                    ?: (if (row.localSongId > 0) "local_${row.localSongId}" else row.songKey),
+                title = row.title,
+                artist = row.artist,
+                album = row.album,
+                cover = row.coverUrl,
+                duration = row.duration,
+                kwRid = row.remoteSongId?.takeIf { it.startsWith("kw_") }
+                    ?.removePrefix("kw_")?.toLongOrNull() ?: -1L
+            )
+        }
+        viewModelScope.launch {
+            val err = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                controller.playQishui(tracks, 0, 0L)
+            }
+            _uiState.update { it.copy(message = err ?: "开始播放「我喜欢」") }
+        }
+    }
+
+    /** 榜单磁贴 → 歌单详情（与点歌单同一套视图） */
+    fun openChart(id: Long, name: String) {
+        openPlaylist(WyPlaylist(id = id, name = name, picUrl = "", trackCount = 0))
     }
 
     fun download(song: RemoteSong) {

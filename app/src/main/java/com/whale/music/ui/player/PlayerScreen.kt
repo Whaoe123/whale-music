@@ -98,6 +98,7 @@ import com.kyant.backdrop.shadow.Shadow
 import com.whale.music.R
 import com.whale.music.data.model.Song
 import com.whale.music.util.CoverResolver
+import com.whale.music.util.DisplayPrefs
 import com.whale.music.player.PlayMode
 import com.whale.music.ui.theme.ProgressActive
 import com.whale.music.ui.theme.ProgressInactive
@@ -304,12 +305,20 @@ fun PlayerScreen(
 
             // Hi-Res 金标：封面下方、右对齐（参考样式）
             // 在线歌看 EAPI 实际下发档位，本地歌异步读真实码率（不卡 UI）
-            if (rememberHiResVisible(currentSong)) {
+            // 开关与大小在设置页调（DisplayPrefs），这里实时生效
+            val hiresBadgeOn by DisplayPrefs.hiresEnabled.collectAsState()
+            val hiresBadgeScale by DisplayPrefs.hiresScale.collectAsState()
+            if (hiresBadgeOn && rememberHiResVisible(currentSong)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    HiResBadge()
+                    HiResBadge(
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = hiresBadgeScale
+                            scaleY = hiresBadgeScale
+                        }
+                    )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
             }
