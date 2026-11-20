@@ -65,6 +65,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -76,13 +78,6 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.InnerShadow
-import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
 import com.whale.music.R
 import com.whale.music.data.model.Song
@@ -118,7 +113,9 @@ fun MiniPlayerBar(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onOpen: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** 当前可见卡片形态（长条 / CD 按钮）在窗口里的矩形，供展开形变锁定起点 */
+    onCardBounds: (androidx.compose.ui.geometry.Rect?) -> Unit = {}
 ) {
     val current = song ?: return
 
@@ -150,6 +147,7 @@ fun MiniPlayerBar(
                     progress = progress,
                     onExpand = { onCollapsedChange(false) },
                     onOpen = onOpen,
+                    onCardBounds = onCardBounds,
                     modifier = Modifier.padding(end = 12.dp)
                 )
             }
@@ -164,7 +162,8 @@ fun MiniPlayerBar(
                 onNext = onNext,
                 onPrevious = onPrevious,
                 onOpen = onOpen,
-                onCollapse = { onCollapsedChange(true) }
+                onCollapse = { onCollapsedChange(true) },
+                onCardBounds = onCardBounds
             )
         }
     }
@@ -185,7 +184,8 @@ private fun ExpandedBar(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onOpen: () -> Unit,
-    onCollapse: () -> Unit
+    onCollapse: () -> Unit,
+    onCardBounds: (androidx.compose.ui.geometry.Rect?) -> Unit
 ) {
     val density = LocalDensity.current
     val landscape = LocalConfiguration.current.let {
@@ -225,6 +225,7 @@ private fun ExpandedBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(if (landscape) 44.dp else 58.dp)
+            .onGloballyPositioned { onCardBounds(it.boundsInWindow()) }
             .graphicsLayer {
                 // 位移/缩放只在绘制阶段读取，拖拽过程中不触发重组
                 val fx = (dragX / switchThreshold).coerceIn(-1f, 1f)
@@ -303,31 +304,11 @@ private fun ExpandedBar(
                 }
         )
 
-        // 玻璃胶囊 + 内容
+        // 玻璃胶囊 + 内容（材质与 PlayerMorph 的形变层同源：playerCardMaterial）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        vibrancy()
-                        blur(8f.dp.toPx())
-                        lens(20f.dp.toPx(), 20f.dp.toPx())
-                    },
-                    highlight = {
-                        Highlight.Default.copy(alpha = 0.45f)
-                    },
-                    shadow = {
-                        Shadow(alpha = 0.28f)
-                    },
-                    innerShadow = {
-                        InnerShadow(radius = 6f.dp, alpha = 0.14f)
-                    },
-                    onDrawSurface = {
-                        drawRect(Color.White.copy(alpha = if (landscape) 0.26f else 0.10f))
-                    }
-                )
+                .playerCardMaterial(backdrop, Capsule())
         ) {
             Row(
                 modifier = Modifier
@@ -427,6 +408,7 @@ private fun CdButton(
     progress: StateFlow<Float>,
     onExpand: () -> Unit,
     onOpen: () -> Unit,
+    onCardBounds: (androidx.compose.ui.geometry.Rect?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var angle by remember { mutableFloatStateOf(0f) }
@@ -451,6 +433,7 @@ private fun CdButton(
     Box(
         modifier = modifier
             .size(56.dp)
+            .onGloballyPositioned { onCardBounds(it.boundsInWindow()) }
             .graphicsLayer {
                 val s = if (pressed) 0.92f else 1f
                 scaleX = s
@@ -462,27 +445,7 @@ private fun CdButton(
                 onClick = onExpand,
                 onLongClick = onOpen
             )
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { CircleShape },
-                effects = {
-                    vibrancy()
-                    blur(8f.dp.toPx())
-                    lens(16f.dp.toPx(), 16f.dp.toPx())
-                },
-                highlight = {
-                    Highlight.Default.copy(alpha = 0.42f)
-                },
-                shadow = {
-                    Shadow(alpha = 0.30f)
-                },
-                innerShadow = {
-                    InnerShadow(radius = 5f.dp, alpha = 0.16f)
-                },
-                onDrawSurface = {
-                    drawRect(Color.White.copy(alpha = 0.10f))
-                }
-            )
+            .playerCardMaterial(backdrop, CircleShape)
     ) {
         // 唱片主体：封面随角度旋转
         Box(

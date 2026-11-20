@@ -63,6 +63,7 @@ import com.whale.music.ui.StartupViewModel
 import com.whale.music.ui.components.SimpleBottomTabs
 import com.whale.music.ui.discover.DiscoverScreen
 import com.whale.music.ui.player.MiniPlayerBar
+import com.whale.music.ui.player.PlayerMorphLayer
 import com.whale.music.ui.player.PlayerScreen
 import com.whale.music.ui.player.PlayerViewModel
 import com.whale.music.ui.playlist.PlaylistScreen
@@ -146,8 +147,10 @@ class MainActivity : ComponentActivity() {
 
                 // 迷你条是否收起成 CD 按钮（下滑收起 / 点击 CD 展开）
                 var miniCollapsed by rememberSaveable { mutableStateOf(false) }
-                // 播放页关掉后：点迷你条仍以全屏浮层打开播放页
-                var showPlayerOverlay by rememberSaveable { mutableStateOf(false) }
+                // 悬浮卡片 → 播放页形变：点卡片展开成播放页，返回键沿弹簧收回到卡片
+                var playerMorphOpen by rememberSaveable { mutableStateOf(false) }
+                // 卡片当前矩形（窗口坐标），作为形变展开的起点（打开瞬间锁定）
+                var morphSourceBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
 
                 LaunchedEffect(pagerState) {
                     snapshotFlow { pagerState.currentPage }.collect { selectedTab = it }
@@ -158,7 +161,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(playerPageOn) {
                     if (playerPageOn != prevPlayerPageOn) {
                         prevPlayerPageOn = playerPageOn
-                        if (playerPageOn) showPlayerOverlay = false
+                        if (playerPageOn) playerMorphOpen = false
                         val idx = pageIds.indexOf(3)
                         selectedTab = idx
                         pagerState.animateScrollToPage(idx)
@@ -260,10 +263,10 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // ── 玻璃迷你播放条：后三页常驻，点一下回播放页 ──
+                    // ── 玻璃悬浮卡片：后三页常驻，点一下从卡片形变展开进播放页 ──
                     //    第一页本身就是播放器，这里淡出并让出手势区域
                     AnimatedVisibility(
-                        visible = !onPlayerPage,
+                        visible = !onPlayerPage && !playerMorphOpen,
                         enter = fadeIn(tween(200)),
                         exit = fadeOut(tween(140)),
                         modifier = Modifier
@@ -282,14 +285,10 @@ class MainActivity : ComponentActivity() {
                             onNext = playerVm::next,
                             onPrevious = playerVm::previous,
                             onOpen = {
-                                if (playerPageOn) {
-                                    selectedTab = 0
-                                    tabScope.launch { pagerState.animateScrollToPage(0) }
-                                } else {
-                                    // 播放页关掉了：点迷你条以全屏浮层打开播放页
-                                    showPlayerOverlay = true
-                                }
+                                // 两种模式都走形变动画：卡片玻璃壳长成全屏播放页
+                                playerMorphOpen = true
                             },
+                            onCardBounds = { morphSourceBounds = it },
                             modifier = Modifier
                                 .padding(horizontal = if (landscape) 12.dp else 16.dp)
                                 .padding(
@@ -362,25 +361,24 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // ── 播放页全屏浮层（播放页关掉后点迷你条打开，返回键关）──
-                    if (!playerPageOn && showPlayerOverlay) {
-                        BackHandler { showPlayerOverlay = false }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(4f)
-                        ) {
-                            PlayerScreen(
-                                modifier = Modifier.fillMaxSize(),
-                                controlsBottomPadding = if (navBarOn) 92.dp else 24.dp,
-                                onOpenSettings = {
-                                    showPlayerOverlay = false
-                                    val idx = pageIds.indexOf(3)
-                                    selectedTab = idx
-                                    tabScope.launch { pagerState.animateScrollToPage(idx) }
-                                }
-                            )
-                        }
+                    // ── 悬浮卡片 → 播放页形变层（点卡片展开 / 返回键收回，材质同卡片玻璃）──
+                    PlayerMorphLayer(
+                        backdrop = backdrop,
+                        open = playerMorphOpen,
+                        onOpenChange = { playerMorphOpen = it },
+                        sourceBounds = { morphSourceBounds },
+                        modifier = Modifier.zIndex(4f)
+                    ) {
+                        PlayerScreen(
+                            modifier = Modifier.fillMaxSize(),
+                            controlsBottomPadding = if (navBarOn) 92.dp else 24.dp,
+                            onOpenSettings = {
+                                playerMorphOpen = false
+                                val idx = pageIds.indexOf(3)
+                                selectedTab = idx
+                                tabScope.launch { pagerState.animateScrollToPage(idx) }
+                            }
+                        )
                     }
 
                     // ── 应用内更新弹窗：盖在所有页面之上 ──
