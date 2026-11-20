@@ -112,6 +112,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # workflow_dispatch 时 github.ref_name 是分支名（main），必须换成 tag
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then TAG="v${VERSION}"; fi
           TAG="${TAG:-v${VERSION}}"
           URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${{ steps.pkg.outputs.name }}"
           python3 - "$URL" "$CODE" "$VERSION" "$SHA" <<'PY'
