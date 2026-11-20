@@ -365,7 +365,7 @@ class DiscoverViewModel @Inject constructor(
                 artist = artistNames.toString(),
                 album = album?.optString("name").orEmpty(),
                 coverUrl = com.whale.music.util.CoverUrl.hd(album?.optString("picUrl") ?: ""),
-                duration = t.optLong("duration", 0L)
+                duration = t.optLong("dt").takeIf { it > 0 } ?: t.optLong("duration", 0L)
             )
         }
         out

@@ -41,6 +41,60 @@ object CoverPalette {
         }
     }
 
+    private const val BAND_COUNT = 8
+
+    private val bandCache = object : LinkedHashMap<String, List<Color>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Color>>?): Boolean =
+            size > 12
+    }
+
+    /** 封面自上而下 8 段均色（歌词亮度自适应的背景剖面原料）。 */
+    suspend fun bandColors(url: String?): List<Color>? {
+        if (url.isNullOrBlank() || !url.startsWith("http")) return null
+        synchronized(bandCache) { bandCache[url] }?.let { return it }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = fetchBytes(url) ?: return@runCatching null
+                val bitmap = decodeSmall(bytes) ?: return@runCatching null
+                val bands = extractBands(bitmap)
+                if (bands != null) {
+                    synchronized(bandCache) { bandCache[url] = bands }
+                }
+                bands
+            }.getOrNull()
+        }
+    }
+
+    private fun extractBands(bitmap: Bitmap): List<Color>? {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= 0 || h <= 0) return null
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        bitmap.recycle()
+        val out = ArrayList<Color>(BAND_COUNT)
+        for (band in 0 until BAND_COUNT) {
+            val y0 = h * band / BAND_COUNT
+            val y1 = h * (band + 1) / BAND_COUNT
+            var r = 0L
+            var g = 0L
+            var b = 0L
+            var n = 0L
+            for (y in y0 until y1) {
+                for (x in 0 until w) {
+                    val px = pixels[y * w + x]
+                    r += android.graphics.Color.red(px)
+                    g += android.graphics.Color.green(px)
+                    b += android.graphics.Color.blue(px)
+                    n++
+                }
+            }
+            if (n == 0L) return null
+            out.add(Color((r / n).toInt() / 255f, (g / n).toInt() / 255f, (b / n).toInt() / 255f))
+        }
+        return out
+    }
+
     private fun extract(url: String): Color? {
         val bytes = fetchBytes(url) ?: return null
         val bitmap = decodeSmall(bytes) ?: return null

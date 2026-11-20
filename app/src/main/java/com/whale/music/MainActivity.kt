@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -160,6 +161,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val onPlayerPage = selectedTab == 0
+                // 横屏：底部簇（导航+迷你条）紧凑化，少占屏幕
+                val landscape = LocalConfiguration.current.let {
+                    it.screenWidthDp > it.screenHeightDp
+                }
 
                 Box(
                     modifier = Modifier
@@ -259,8 +264,8 @@ class MainActivity : ComponentActivity() {
                                 tabScope.launch { pagerState.animateScrollToPage(0) }
                             },
                             modifier = Modifier
-                                .padding(horizontal = 16.dp)
-                                .padding(bottom = 92.dp)
+                                .padding(horizontal = if (landscape) 12.dp else 16.dp)
+                                .padding(bottom = if (landscape) 58.dp else 92.dp)
                         )
                     }
 
@@ -289,7 +294,8 @@ class MainActivity : ComponentActivity() {
                                 else -> Icons.Default.Settings
                             }
                             val iconSize by animateDpAsState(
-                                targetValue = if (isSelected) 25.dp else 21.dp,
+                                targetValue = (if (isSelected) 25.dp else 21.dp) *
+                                    (if (landscape) 0.82f else 1f),
                                 animationSpec = spring(dampingRatio = 0.45f, stiffness = 620f),
                                 label = "tabIconSize"
                             )
@@ -307,8 +313,8 @@ class MainActivity : ComponentActivity() {
                         },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .width(232.dp)
-                            .padding(bottom = 28.dp)
+                            .width(if (landscape) 196.dp else 232.dp)
+                            .padding(bottom = if (landscape) 12.dp else 28.dp)
                             .zIndex(3f)
                     )
 

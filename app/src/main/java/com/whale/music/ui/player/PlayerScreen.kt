@@ -85,6 +85,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,7 +107,13 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
+import androidx.compose.foundation.layout.wrapContentWidth
 import com.whale.music.R
+import android.app.Activity
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import com.whale.music.ui.lyrics.LyricsPage
 import com.whale.music.data.model.Song
 import com.whale.music.util.CoverPalette
 import com.whale.music.util.CoverResolver
@@ -125,10 +132,10 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * 播放页 — Spotify/Apple Music 同款方案
- * 架构（同 cool-digital 的 DiscoverScreen）：
- * - Column 内容：layerBackdrop source（封面、歌曲信息、进度条）
- * - PlaybackGlassControls：sibling overlay，用真正的 drawBackdrop 折射封面内容
+ * 播放页 — 三页横滑（封面｜歌词｜更多）：
+ * - 背景层：模糊封面 + 氛围光，独立 bgBackdrop 供歌词玻璃底板折射
+ * - 内容层：顶栏 + HorizontalPager（黑胶封面 / 全屏歌词 / 播放队列）+ 标题 + 进度
+ * - 播放控件：5 键玻璃控制栏（sibling overlay，折射内容层）
  */
 @Composable
 fun PlayerScreen(
@@ -140,11 +147,13 @@ fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
+    val bgBackdrop = rememberLayerBackdrop()
     val backdrop = rememberLayerBackdrop()
     val currentSong by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val playMode by viewModel.playMode.collectAsState()
     val isFavorite by viewModel.isFavorite.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val playModeLabel = stringResource(
         when (playMode) {
             PlayMode.SEQUENCE -> R.string.play_mode_sequence
@@ -162,41 +171,78 @@ fun PlayerScreen(
     val playerArtwork by viewModel.artwork.collectAsState()
     val artUri: Any? = playerArtwork ?: currentSong?.let { CoverResolver.resolveSong(it.id, it.albumId) }
 
-    // 封面主色：驱动氛围光 / 进度条渐变 / 唱片反光（每首歌自动换色）
+    // 封面主色（氛围光/进度条渐变/唱片反光）+ 背景剖面（歌词亮度自适应）
     val accent by produceState(initialValue = ProgressActive, key1 = artUri) {
         value = CoverPalette.dominant(artUri?.toString()) ?: ProgressActive
     }
+    val bgProfile by produceState<com.whale.music.ui.lyrics.BgProfile?>(
+        initialValue = null,
+        key1 = artUri
+    ) {
+        value = CoverPalette.bandColors(artUri?.toString())
+            ?.let { com.whale.music.ui.lyrics.buildBgProfile(it) }
+    }
 
-    // 歌词：点封面切换
-    var showLyrics by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
+    var showLyricSettings by remember { mutableStateOf(false) }
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
     var lyrics by remember { mutableStateOf<List<com.whale.music.data.remote.LyricLine>>(emptyList()) }
-    var lyricsLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(currentSong?.id, showLyrics) {
-        val song = currentSong ?: return@LaunchedEffect
-        if (!showLyrics || lyrics.isNotEmpty()) return@LaunchedEffect
-        lyricsLoading = true
-        lyrics = com.whale.music.data.remote.LyricSource.load(song.title, song.artist)
-        lyricsLoading = false
-    }
     LaunchedEffect(currentSong?.id) {
-        // 切歌后清空旧歌词
+        // 切歌：清旧歌词再取新（LyricSource 自带缓存/负缓存，直接预取）
         lyrics = emptyList()
+        val song = currentSong
+        if (song != null) {
+            lyrics = com.whale.music.data.remote.LyricSource.load(song.title, song.artist)
+        }
     }
+
+    // 三页横滑：0 封面 / 1 歌词 / 2 更多（队列）
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    val scope = rememberCoroutineScope()
+    val hideStatusBar by com.whale.music.ui.lyrics.LyricPrefs.hideStatusBar.collectAsState()
+    val songNow = currentSong
+    // 横屏：Coverflow 封面墙 + 左封面右歌词 + 横排底部
+    val landscape = LocalConfiguration.current.let {
+        it.screenWidthDp > it.screenHeightDp
+    }
+    val songKey = com.whale.music.ui.lyrics.LyricPrefs.songKey(
+        songNow?.albumId ?: 0L,
+        songNow?.id ?: 0L
+    )
+
+    // 隐藏状态栏：只在歌词页 + 开关打开时生效，离开自动恢复
+    val activity = context as? Activity
+    LaunchedEffect(hideStatusBar, pagerState.currentPage) {
+        val win = activity?.window ?: return@LaunchedEffect
+        val controller = androidx.core.view.WindowCompat.getInsetsController(win, win.decorView)
+        if (hideStatusBar && pagerState.currentPage == 1) {
+            controller.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else {
+            controller.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        }
+    }
+
+    // 返回键分层：先退出歌词/队列页，退完才走页面级返回
+    BackHandler(enabled = pagerState.currentPage != 0) {
+        scope.launch { pagerState.animateScrollToPage(0) }
+    }
+    // 歌词设置面板：开着时返回键先关面板
+    BackHandler(enabled = showLyricSettings) {
+        showLyricSettings = false
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // ── backdrop 采样源：模糊背景+内容（不含播放控件）──
+        // ── 背景层：模糊封面 + 暗纱 + 氛围光 + 底部渐变（玻璃折射源）──
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
+                .layerBackdrop(bgBackdrop)
         ) {
-            // ── 封面模糊背景（Crossfade 过渡，切歌不硬切）──
             Crossfade(
                 targetState = artUri,
                 animationSpec = tween(1200),
@@ -225,7 +271,7 @@ fun PlayerScreen(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.26f))
             )
-            // 动态氛围光：两团随封面主色慢移的色斑（模块 C）
+            // 动态氛围光：两团随封面主色慢移的色斑
             AuroraLayer(accent = accent)
             // 底部渐变压暗，保证标题 / 控件可读
             Box(
@@ -239,186 +285,228 @@ fun PlayerScreen(
                         )
                     )
             )
+        }
 
-            // ── 内容 Column ──
+        // ── 内容层 ──
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(backdrop)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 32.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(top = 4.dp, bottom = controlsBottomPadding + 104.dp),
+                    .padding(
+                        top = 4.dp,
+                        // 横屏：进度/标题/控件收进各页底部簇，只给底部导航胶囊留净空
+                        bottom = if (landscape) 60.dp else controlsBottomPadding + 104.dp
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-            // 顶栏：「正在播放」+ 更多（加入歌单）
-            Row(
+            // 顶栏（竖屏）：「正在播放」+ 歌词设置 + 更多；横屏改为右上角浮层（省 44dp 给封面墙）
+            if (!landscape) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "正在播放",
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.45f)
+                    )
+                    Spacer(Modifier.weight(1f))
+                    PlayerTopActions(
+                        onOpenLyricSettings = { showLyricSettings = true },
+                        moreMenu = moreMenu,
+                        onMoreMenuChange = { moreMenu = it },
+                        onAddToPlaylist = { showAddSheet = true },
+                        onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
+                        onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } }
+                    )
+                }
+            }
+
+            // ── 三页横滑：封面｜歌词｜更多 ──
+            HorizontalPager(
+                state = pagerState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "正在播放",
-                    fontSize = 11.sp,
-                    color = Color.White.copy(alpha = 0.45f)
-                )
-                Spacer(Modifier.weight(1f))
-                // 设置 → 跳设置页（版本 / 检测更新 / 音质 / 自动播放）
-                PressableIconButton(
-                    onClick = onOpenSettings,
-                    buttonSize = 44.dp,
-                    baseAlpha = 0f
-                ) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "设置",
-                        tint = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-                Box {
-                    PressableIconButton(
-                        onClick = { moreMenu = true },
-                        buttonSize = 44.dp,
-                        baseAlpha = 0f
-                    ) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "更多",
-                            tint = Color.White.copy(alpha = 0.7f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = moreMenu,
-                        onDismissRequest = { moreMenu = false },
-                        containerColor = Color(0xFF242426)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("加入歌单", fontSize = 13.sp, color = Color.White) },
-                            onClick = { moreMenu = false; showAddSheet = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("切到歌词", fontSize = 13.sp, color = Color.White) },
-                            onClick = { moreMenu = false; showLyrics = true }
-                        )
-                    }
-                }
-            }
-
-            // 封面 / 歌词（点击切换；上下滑切歌）
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.92f)
-                    .aspectRatio(1f)
-            ) {
-                SwipeToSwitch(
-                    onSwipeUp = viewModel::next,
-                    onSwipeDown = viewModel::previous
-                ) {
-                    if (showLyrics) {
-                        LyricsPanel(
-                            lyrics = lyrics,
-                            loading = lyricsLoading,
+                    .weight(1f)
+            ) { page ->
+                when {
+                    // 横屏封面页：3D Coverflow 封面墙 + 底部簇（进度/歌名/控件，对照 AuraPlayer）
+                    landscape && page == 0 -> Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) {
+                            CoverflowPage(viewModel = viewModel, accent = accent)
+                        }
+                        LandscapeBottomCluster(
                             viewModel = viewModel,
-                            onTap = { showLyrics = false }
-                        )
-                    } else {
-                        VinylCard(
-                            song = currentSong,
-                            artwork = artUri,
-                            isPlaying = isPlaying,
                             accent = accent,
-                            modifier = Modifier.fillMaxSize(),
-                            onTap = { showLyrics = true }
+                            backdrop = bgBackdrop,
+                            songNow = songNow
                         )
                     }
-                }
-            }
 
-            Spacer(modifier = Modifier.height(22.dp))
-
-            // Hi-Res 金标：封面下方、右对齐（参考样式）
-            // 在线歌看 EAPI 实际下发档位，本地歌异步读真实码率（不卡 UI）
-            // 开关与大小在设置页调（DisplayPrefs），这里实时生效
-            val hiresBadgeOn by DisplayPrefs.hiresEnabled.collectAsState()
-            val hiresBadgeScale by DisplayPrefs.hiresScale.collectAsState()
-            if (hiresBadgeOn && rememberHiResVisible(currentSong)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    HiResBadge(
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = hiresBadgeScale
-                            scaleY = hiresBadgeScale
+                    // 横屏歌词页：左面板（封面+歌名+进度+控件）+ 右大字歌词
+                    landscape && page == 1 -> LandscapeLyricsLayout(
+                        viewModel = viewModel,
+                        accent = accent,
+                        backdrop = bgBackdrop,
+                        songNow = songNow,
+                        lyricsPage = {
+                            LyricsPage(
+                                lines = lyrics,
+                                positionMs = uiState.currentPosition,
+                                durationMs = uiState.duration,
+                                isPlaying = isPlaying,
+                                songKey = songKey,
+                                accent = accent,
+                                bgProfile = bgProfile,
+                                bgBackdrop = bgBackdrop,
+                                onSeek = viewModel::seekToMs
+                            )
                         }
                     )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-            }
 
-            // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行（按钮全部下移到控制栏）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Start
-            ) {
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
-                    Text(
-                        text = currentSong?.title ?: stringResource(R.string.status_not_playing),
-                        fontSize = 29.sp, fontWeight = FontWeight.Bold,
-                        color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.basicMarquee()
-                    )
-                    Spacer(modifier = Modifier.height(5.dp))
-                    val songNow = currentSong
-                    val srcLabel = when {
-                        songNow == null -> null
-                        songNow.albumId == PlayerViewModel.REMOTE_WY_ALBUM_ID -> "网易云"
-                        songNow.albumId == PlayerViewModel.REMOTE_LX_ALBUM_ID -> "自定义"
-                        songNow.albumId < 0L -> "酷我"
-                        else -> "本地"
+                    // 横屏队列页：队列列表 + 同款底部簇
+                    landscape && page == 2 -> Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) {
+                            QueuePage(viewModel = viewModel, accent = accent)
+                        }
+                        LandscapeBottomCluster(
+                            viewModel = viewModel,
+                            accent = accent,
+                            backdrop = bgBackdrop,
+                            songNow = songNow
+                        )
                     }
-                    val subtitle = listOfNotNull(
-                        songNow?.artist?.takeIf { it.isNotBlank() },
-                        songNow?.album?.takeIf { it.isNotBlank() },
-                        srcLabel
-                    ).joinToString("  ·  ")
-                    Text(
-                        text = subtitle.ifBlank { "左右滑到「Whale-汽水」挑一首" },
-                        fontSize = 14.sp, color = Color.White.copy(alpha = 0.62f),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
+
+                    // 封面页：黑胶唱片，上下滑切歌，点封面进歌词
+                    page == 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(0.92f)
+                                .aspectRatio(1f)
+                        ) {
+                            SwipeToSwitch(
+                                onSwipeUp = viewModel::next,
+                                onSwipeDown = viewModel::previous
+                            ) {
+                                VinylCard(
+                                    song = currentSong,
+                                    artwork = artUri,
+                                    isPlaying = isPlaying,
+                                    accent = accent,
+                                    modifier = Modifier.fillMaxSize(),
+                                    onTap = { scope.launch { pagerState.animateScrollToPage(1) } }
+                                )
+                            }
+                        }
+                    }
+
+                    // 歌词页：全屏主题歌词（玻璃底板 + 5 种样式 + 设置面板）
+                    page == 1 -> LyricsPage(
+                        lines = lyrics,
+                        positionMs = uiState.currentPosition,
+                        durationMs = uiState.duration,
+                        isPlaying = isPlaying,
+                        songKey = songKey,
+                        accent = accent,
+                        bgProfile = bgProfile,
+                        bgBackdrop = bgBackdrop,
+                        onSeek = viewModel::seekToMs
                     )
+
+                    // 更多页：播放队列
+                    else -> QueuePage(viewModel = viewModel, accent = accent)
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            // Hi-Res 金标开关（设置页调）
+            val hiresBadgeOn by DisplayPrefs.hiresEnabled.collectAsState()
+            val hiresBadgeScale by DisplayPrefs.hiresScale.collectAsState()
 
-            // 进度条（独立组合，避免每 500ms 整页重组；激活段随封面主色渐变）
-            ProgressArea(viewModel = viewModel, accent = accent)
+            // 竖屏：金标 + 歌曲信息 + 进度条（横屏已收进各页底部簇）
+            if (!landscape) {
+                if (hiresBadgeOn && rememberHiResVisible(currentSong)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        HiResBadge(
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = hiresBadgeScale
+                                scaleY = hiresBadgeScale
+                            }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
-            Spacer(modifier = Modifier.weight(1f))
+                // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行
+                SongTextBlock(songNow, Modifier.fillMaxWidth())
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // 进度条（独立组合，避免每 500ms 整页重组；激活段随封面主色渐变）
+                ProgressArea(viewModel = viewModel, accent = accent)
+            }
         }
-        } // backdrop source wrapper
 
-        // ── 播放控件 — sibling overlay，5 键标准控制栏 ──
-        PlaybackGlassControls(
-            backdrop = backdrop,
-            isPlaying = isPlaying,
-            playMode = playMode,
-            modeLabel = playModeLabel,
-            isFavorite = isFavorite,
-            onPrevious = viewModel::previous,
-            onTogglePlay = viewModel::togglePlay,
-            onNext = viewModel::next,
-            onToggleMode = viewModel::togglePlayMode,
-            onToggleFavorite = viewModel::toggleFavorite,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = controlsBottomPadding)
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
-        )
+            // 横屏：歌词设置/更多浮到右上角（省掉顶栏 44dp，封面墙更大）
+            if (landscape) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(top = 4.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PlayerTopActions(
+                        onOpenLyricSettings = { showLyricSettings = true },
+                        moreMenu = moreMenu,
+                        onMoreMenuChange = { moreMenu = it },
+                        onAddToPlaylist = { showAddSheet = true },
+                        onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
+                        onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } }
+                    )
+                }
+            }
+        } // content wrapper
+
+        // ── 播放控件 — 竖屏：sibling overlay，5 键标准控制栏（横屏已收进各页底部簇）──
+        if (!landscape) {
+            PlaybackGlassControls(
+                backdrop = backdrop,
+                isPlaying = isPlaying,
+                playMode = playMode,
+                modeLabel = playModeLabel,
+                isFavorite = isFavorite,
+                onPrevious = viewModel::previous,
+                onTogglePlay = viewModel::togglePlay,
+                onNext = viewModel::next,
+                onToggleMode = viewModel::togglePlayMode,
+                onToggleFavorite = viewModel::toggleFavorite,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = controlsBottomPadding)
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp)
+            )
+        }
+
+        // ── 歌词设置面板（玻璃材质）──
+        if (showLyricSettings) {
+            com.whale.music.ui.lyrics.LyricSettingsSheet(
+                songKey = songKey,
+                bgBackdrop = bgBackdrop,
+                onDismiss = { showLyricSettings = false }
+            )
+        }
 
         // ── 加入歌单 ──
         if (showAddSheet) {
@@ -448,6 +536,146 @@ fun PlayerScreen(
                 )
             }
         }
+    }
+}
+
+/** 顶栏右侧动作：歌词设置 + 更多菜单（竖屏顶栏 / 横屏右上浮层共用） */
+@Composable
+private fun PlayerTopActions(
+    onOpenLyricSettings: () -> Unit,
+    moreMenu: Boolean,
+    onMoreMenuChange: (Boolean) -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onGoLyrics: () -> Unit,
+    onGoQueue: () -> Unit
+) {
+    // 歌词设置（原歌词页右上角按钮挪到顶栏）
+    PressableIconButton(
+        onClick = onOpenLyricSettings,
+        buttonSize = 44.dp,
+        baseAlpha = 0f
+    ) {
+        Icon(
+            Icons.Default.Settings,
+            contentDescription = "歌词设置",
+            tint = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.size(19.dp)
+        )
+    }
+    Box {
+        PressableIconButton(
+            onClick = { onMoreMenuChange(true) },
+            buttonSize = 44.dp,
+            baseAlpha = 0f
+        ) {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = "更多",
+                tint = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        DropdownMenu(
+            expanded = moreMenu,
+            onDismissRequest = { onMoreMenuChange(false) },
+            containerColor = Color(0xFF242426)
+        ) {
+            DropdownMenuItem(
+                text = { Text("加入歌单", fontSize = 13.sp, color = Color.White) },
+                onClick = { onMoreMenuChange(false); onAddToPlaylist() }
+            )
+            DropdownMenuItem(
+                text = { Text("切到歌词", fontSize = 13.sp, color = Color.White) },
+                onClick = { onMoreMenuChange(false); onGoLyrics() }
+            )
+            DropdownMenuItem(
+                text = { Text("播放队列", fontSize = 13.sp, color = Color.White) },
+                onClick = { onMoreMenuChange(false); onGoQueue() }
+            )
+        }
+    }
+}
+
+/**
+ * 横屏底部簇（对照 AuraPlayer）：进度通栏 + 时间，
+ * 下面歌名/歌手靠左、5 键玻璃控件靠右。放在各页内容之下、导航胶囊之上。
+ */
+@Composable
+private fun LandscapeBottomCluster(
+    viewModel: PlayerViewModel,
+    accent: Color,
+    backdrop: Backdrop,
+    songNow: Song?
+) {
+    val isPlaying by viewModel.isPlaying.collectAsState()
+    val playMode by viewModel.playMode.collectAsState()
+    val isFavorite by viewModel.isFavorite.collectAsState()
+    val modeLabel = stringResource(
+        when (playMode) {
+            PlayMode.SEQUENCE -> R.string.play_mode_sequence
+            PlayMode.REPEAT_ONE -> R.string.play_mode_repeat_one
+            PlayMode.SHUFFLE -> R.string.play_mode_shuffle
+        }
+    )
+
+    Column(Modifier.fillMaxWidth()) {
+        ProgressArea(viewModel = viewModel, accent = accent)
+        Spacer(Modifier.height(4.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            SongTextBlock(songNow, Modifier.weight(1f), compact = true)
+            PlaybackGlassControls(
+                backdrop = backdrop,
+                isPlaying = isPlaying,
+                playMode = playMode,
+                modeLabel = modeLabel,
+                isFavorite = isFavorite,
+                onPrevious = viewModel::previous,
+                onTogglePlay = viewModel::togglePlay,
+                onNext = viewModel::next,
+                onToggleMode = viewModel::togglePlayMode,
+                onToggleFavorite = viewModel::toggleFavorite,
+                modifier = Modifier.width(320.dp)
+            )
+        }
+    }
+}
+
+/** 歌曲信息块：标题跑马灯 + 「歌手 · 专辑 · 来源」副行（竖屏/横屏共用） */
+@Composable
+private fun SongTextBlock(
+    songNow: Song?,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.Start) {
+        Text(
+            text = songNow?.title ?: stringResource(R.string.status_not_playing),
+            fontSize = if (compact) 20.sp else 29.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.basicMarquee()
+        )
+        Spacer(modifier = Modifier.height(if (compact) 3.dp else 5.dp))
+        val srcLabel = when {
+            songNow == null -> null
+            songNow.albumId == PlayerViewModel.REMOTE_WY_ALBUM_ID -> "网易云"
+            songNow.albumId == PlayerViewModel.REMOTE_LX_ALBUM_ID -> "自定义"
+            songNow.albumId < 0L -> "酷我"
+            else -> "本地"
+        }
+        val subtitle = listOfNotNull(
+            songNow?.artist?.takeIf { it.isNotBlank() },
+            songNow?.album?.takeIf { it.isNotBlank() },
+            srcLabel
+        ).joinToString("  ·  ")
+        Text(
+            text = subtitle.ifBlank { "左右滑到「Whale-汽水」挑一首" },
+            fontSize = 14.sp, color = Color.White.copy(alpha = 0.62f),
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -670,7 +898,7 @@ private fun SwipeToSwitch(
  * + InteractiveHighlight 触摸高光 + layerBlock 按压缩放
  */
 @Composable
-private fun PlaybackGlassControls(
+internal fun PlaybackGlassControls(
     backdrop: Backdrop,
     isPlaying: Boolean,
     playMode: PlayMode,
@@ -883,87 +1111,9 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
-/** 歌词面板 — 点按切回封面，当前行高亮并自动居中滚动 */
-@Composable
-private fun LyricsPanel(
-    lyrics: List<com.whale.music.data.remote.LyricLine>,
-    loading: Boolean,
-    viewModel: PlayerViewModel,
-    onTap: () -> Unit
-) {
-    val uiState by viewModel.uiState.collectAsState()
-    val positionMs = uiState.currentPosition
-    val listState = rememberLazyListState()
-    val currentIndex = remember(lyrics, positionMs) {
-        lyrics.indexOfLast { it.timeMs <= positionMs + 200 }.coerceAtLeast(0)
-    }
-
-    LaunchedEffect(currentIndex) {
-        if (lyrics.isNotEmpty()) {
-            // 当前唱到的行放在歌词区偏上的位置（距离顶部约两行）
-            listState.animateScrollToItem((currentIndex - 2).coerceAtLeast(0))
-        }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.White.copy(alpha = 0.07f))
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                onClick = onTap
-            )
-    ) {
-        when {
-            loading -> Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = Color.White.copy(alpha = 0.5f),
-                    strokeWidth = 2.dp
-                )
-            }
-
-            lyrics.isEmpty() -> Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "暂无歌词",
-                    color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 14.sp
-                )
-            }
-
-            else -> LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 40.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                itemsIndexed(lyrics) { index, line ->
-                    val active = index == currentIndex
-                    Text(
-                        text = line.text,
-                        fontSize = if (active) 17.sp else 15.sp,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                        color = if (active) Color.White else Color.White.copy(alpha = 0.4f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
 /** 进度条 + 时间 — 自带状态订阅，只重组自身；主色→白 渐变 + 发光圆点（模块 B） */
 @Composable
-private fun ProgressArea(viewModel: PlayerViewModel, accent: Color) {
+internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color) {
     val uiState by viewModel.uiState.collectAsState()
     val progress = uiState.progress
     val currentPosition = uiState.currentPosition

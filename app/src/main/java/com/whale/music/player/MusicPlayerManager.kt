@@ -283,6 +283,14 @@ class MusicPlayerManager @Inject constructor(
      */
     fun hasQueue(): Boolean = queueCount > 0
 
+    /** 播放队列快照（播放页「更多」用） */
+    fun queueSnapshot(): List<Song> = playlist
+
+    /** 跳到队列第 index 首 */
+    fun playAt(index: Int) = withController { player ->
+        if (index in playlist.indices) player.seekToDefaultPosition(index)
+    }
+
     fun togglePlayMode() {
         _playMode.value = nextPlayMode(_playMode.value)
         prefs.edit { putInt("play_mode", _playMode.value.ordinal) }

@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
@@ -64,6 +65,9 @@ fun SimpleBottomTabs(
 ) {
     val tabsCount = tabLabels.size
     require(tabsCount > 0) { "SimpleBottomTabs requires at least one tab" }
+    val landscape = LocalConfiguration.current.let {
+        it.screenWidthDp > it.screenHeightDp
+    }
     val isLightTheme = !isSystemInDarkTheme()
     val containerColor = if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f) else Color(0xFF121212).copy(0.4f)
 
@@ -113,9 +117,9 @@ fun SimpleBottomTabs(
                     },
                     onDrawSurface = { drawRect(containerColor) }
                 )
-                .height(46.dp)
+                .height(if (landscape) 38.dp else 46.dp)
                 .fillMaxWidth()
-                .padding(4.dp),
+                .padding(if (landscape) 3.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             repeat(tabsCount) {
@@ -166,9 +170,9 @@ fun SimpleBottomTabs(
         // ── 层3：纯图标显示 ──
         Row(
             Modifier
-                .height(46.dp)
+                .height(if (landscape) 38.dp else 46.dp)
                 .fillMaxWidth()
-                .padding(4.dp),
+                .padding(if (landscape) 3.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             repeat(tabsCount) { index ->

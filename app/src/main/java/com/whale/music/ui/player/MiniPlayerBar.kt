@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -187,6 +188,9 @@ private fun ExpandedBar(
     onCollapse: () -> Unit
 ) {
     val density = LocalDensity.current
+    val landscape = LocalConfiguration.current.let {
+        it.screenWidthDp > it.screenHeightDp
+    }
     val switchThreshold = with(density) { 64.dp.toPx() }
     val collapseThreshold = with(density) { 52.dp.toPx() }
 
@@ -220,7 +224,7 @@ private fun ExpandedBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
+            .height(if (landscape) 44.dp else 58.dp)
             .graphicsLayer {
                 // 位移/缩放只在绘制阶段读取，拖拽过程中不触发重组
                 val fx = (dragX / switchThreshold).coerceIn(-1f, 1f)
@@ -321,7 +325,7 @@ private fun ExpandedBar(
                         InnerShadow(radius = 6f.dp, alpha = 0.14f)
                     },
                     onDrawSurface = {
-                        drawRect(Color.White.copy(alpha = 0.10f))
+                        drawRect(Color.White.copy(alpha = if (landscape) 0.26f else 0.10f))
                     }
                 )
         ) {
@@ -331,14 +335,14 @@ private fun ExpandedBar(
                     .padding(start = 7.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CoverThumb(artwork = artwork, size = 44.dp)
+                CoverThumb(artwork = artwork, size = if (landscape) 32.dp else 44.dp)
 
                 Spacer(Modifier.width(10.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = song.title,
-                        fontSize = 13.sp,
+                        fontSize = if (landscape) 12.sp else 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White,
                         maxLines = 1,
@@ -357,7 +361,7 @@ private fun ExpandedBar(
                 Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                     PressableIconButton(
                         onClick = onPrevious,
-                        buttonSize = 38.dp,
+                        buttonSize = if (landscape) 30.dp else 38.dp,
                         baseAlpha = 0.04f
                     ) {
                         Icon(
@@ -369,7 +373,7 @@ private fun ExpandedBar(
                     }
                     PressableIconButton(
                         onClick = onTogglePlay,
-                        buttonSize = 38.dp,
+                        buttonSize = if (landscape) 30.dp else 38.dp,
                         baseAlpha = 0.04f
                     ) {
                         Icon(
@@ -382,7 +386,7 @@ private fun ExpandedBar(
                     }
                     PressableIconButton(
                         onClick = onNext,
-                        buttonSize = 38.dp,
+                        buttonSize = if (landscape) 30.dp else 38.dp,
                         baseAlpha = 0.04f
                     ) {
                         Icon(

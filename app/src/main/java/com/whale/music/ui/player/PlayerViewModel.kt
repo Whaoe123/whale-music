@@ -48,6 +48,13 @@ class PlayerViewModel @Inject constructor(
     /** 当前选择；null = 自动（会员无损 / 免费 320k） */
     fun qualityLevel(): NcmLevel? = ncmSession.qualityLevel()
 
+    /** 播放队列快照 + 跳转（播放页「更多」页签） */
+    fun queue(): List<com.whale.music.data.model.Song> = playerManager.queueSnapshot()
+    fun playAt(index: Int) = playerManager.playAt(index)
+
+    /** 按毫秒跳进度（歌词点句跳转） */
+    fun seekToMs(ms: Long) = playerManager.seekToMs(ms)
+
     /**
      * 写入选择并**立刻清掉已解析地址与 EAPI 缓存** ——
      * 不清缓存就会继续播旧档位的地址，选项等于没选。
