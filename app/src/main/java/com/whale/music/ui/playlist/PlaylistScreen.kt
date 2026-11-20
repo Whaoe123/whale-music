@@ -1,5 +1,6 @@
 package com.whale.music.ui.playlist
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -104,6 +105,15 @@ fun PlaylistScreen(
     // 详情页：我喜欢的音乐 / 本地音乐
     var showFavorites by remember { mutableStateOf(false) }
     var showLocal by remember { mutableStateOf(false) }
+
+    // 系统返回：先退出歌单详情 / 我喜欢 / 本地音乐，退出完了才轮到「回播放页」
+    BackHandler(enabled = openedId != null || showFavorites || showLocal) {
+        when {
+            openedId != null -> viewModel.closePlaylist()
+            showFavorites -> showFavorites = false
+            showLocal -> showLocal = false
+        }
+    }
 
     // 长按待删除的本地歌曲
     var pendingDelete by remember { mutableStateOf<Song?>(null) }

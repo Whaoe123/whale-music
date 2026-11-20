@@ -221,7 +221,9 @@ class DiscoverViewModel @Inject constructor(
                 id = id,
                 name = p.optString("name"),
                 picUrl = p.optString("picUrl"),
-                trackCount = p.optInt("playCount", 0)
+                // 必须读 trackCount（歌数）；之前误读 playCount（播放量），大播放量
+                // 还会溢出成 2147483647，角标就成了天文数字
+                trackCount = p.optInt("trackCount", 0).coerceIn(0, 999_999)
             )
         }
         out

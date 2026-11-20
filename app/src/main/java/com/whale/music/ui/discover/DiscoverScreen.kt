@@ -1,5 +1,6 @@
 package com.whale.music.ui.discover
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ColorFilter
@@ -124,6 +125,17 @@ fun DiscoverScreen(
     var searchMode by remember { mutableStateOf(false) }
     // 长按待加入歌单的在线歌
     var pendingAdd by remember { mutableStateOf<RemoteSong?>(null) }
+
+    // 系统返回：先退出歌单详情 / 搜索态，退出完了才轮到「回播放页」
+    BackHandler(enabled = uiState.openedPlaylist != null || searchMode) {
+        when {
+            uiState.openedPlaylist != null -> viewModel.closePlaylist()
+            searchMode -> {
+                searchMode = false
+                viewModel.clearSearch()
+            }
+        }
+    }
     val statusBarTop = androidx.compose.foundation.layout.WindowInsets.statusBars
         .asPaddingValues().calculateTopPadding()
 
@@ -1228,19 +1240,22 @@ private fun PlaylistGridCard(
                 error = painterResource(R.drawable.default_album_art),
                 fallback = painterResource(R.drawable.default_album_art)
             )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(6.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 7.dp, vertical = 3.dp)
-            ) {
-                Text(
-                    text = "${playlist.trackCount} 首",
-                    fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.92f)
-                )
+            // 歌数角标：拿不到歌数（0）时不摆，避免「0 首」或天文数字
+            if (playlist.trackCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "${playlist.trackCount} 首",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.92f)
+                    )
+                }
             }
         }
         Spacer(Modifier.height(6.dp))
