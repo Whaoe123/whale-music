@@ -55,6 +55,20 @@ class SettingsViewModel @Inject constructor(
 
     fun setHiresScale(scale: Float) = com.whale.music.util.DisplayPrefs.setHiresScale(scale)
 
+    // ───────── 底部导航栏开关（DisplayPrefs：StateFlow，MainActivity 实时生效） ─────────
+
+    val navBarEnabled = com.whale.music.util.DisplayPrefs.navBarEnabled
+
+    fun setNavBarEnabled(enabled: Boolean) =
+        com.whale.music.util.DisplayPrefs.setNavBarEnabled(enabled)
+
+    // ───────── 播放页开关（DisplayPrefs：StateFlow，MainActivity 实时生效） ─────────
+
+    val playerPageEnabled = com.whale.music.util.DisplayPrefs.playerPageEnabled
+
+    fun setPlayerPageEnabled(enabled: Boolean) =
+        com.whale.music.util.DisplayPrefs.setPlayerPageEnabled(enabled)
+
     /**
      * 清理各类缓存：播放取址 / 歌词（含磁盘哨兵）/ 酷我搜索查询词 / lx 匹配。
      * 音质切换的地址缓存清理由 PlayerViewModel 负责，这里全量兜底。

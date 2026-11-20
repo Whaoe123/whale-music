@@ -399,15 +399,15 @@ private fun ExpandedBar(
                 }
             }
 
-            // 底部细进度线（独立订阅，避免每 500ms 让整条重组）
+            // 底部细进度线（独立订阅，避免每 500ms 让整条重组）— 发光胶囊同款材质
             MiniProgress(
                 progress = progress,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .padding(start = 26.dp, end = 26.dp)
-                    .padding(bottom = 3.dp)
-                    .height(2.dp)
+                    .padding(bottom = 1.dp)
+                    .height(7.dp)
             )
         }
     }
@@ -608,16 +608,12 @@ private fun CoverThumb(artwork: Any?, size: androidx.compose.ui.unit.Dp) {
 @Composable
 private fun MiniProgress(progress: StateFlow<Float>, modifier: Modifier = Modifier) {
     val p by progress.collectAsState()
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(1.dp))
-            .background(Color.White.copy(alpha = 0.12f))
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(p.coerceIn(0f, 1f))
-                .fillMaxHeight()
-                .background(Color.White.copy(alpha = 0.62f))
-        )
-    }
+    GlowProgressBar(
+        value = p,
+        accent = Color.White,
+        modifier = modifier,
+        thickness = 2.5.dp,
+        dragThickness = 2.5.dp,
+        halo = false
+    )
 }

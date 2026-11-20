@@ -592,7 +592,10 @@ private fun LibraryHome(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        contentPadding = PaddingValues(bottom = 170.dp)
+        contentPadding = PaddingValues(
+                    bottom = if (com.whale.music.util.DisplayPrefs.navBarEnabled.collectAsState().value)
+                        170.dp else 100.dp
+                )
     ) {
         item {
             FavoriteEntry(count = favoriteCount, cover = favoriteCover, onClick = onOpenFavorites)
@@ -895,7 +898,10 @@ private fun LocalSongsPage(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 170.dp)
+                contentPadding = PaddingValues(
+                    bottom = if (com.whale.music.util.DisplayPrefs.navBarEnabled.collectAsState().value)
+                        170.dp else 100.dp
+                )
             ) {
                 itemsIndexed(songs, key = { _, song -> "local_${song.id}" }) { index, song ->
                     GlassSongCard(

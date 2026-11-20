@@ -206,6 +206,8 @@ fun PlayerScreen(
     val landscape = LocalConfiguration.current.let {
         it.screenWidthDp > it.screenHeightDp
     }
+    // 底部导航栏开关（设置页「界面」）：关掉后各页底部净空收缩
+    val navBarOn by com.whale.music.util.DisplayPrefs.navBarEnabled.collectAsState()
     val songKey = com.whale.music.ui.lyrics.LyricPrefs.songKey(
         songNow?.albumId ?: 0L,
         songNow?.id ?: 0L
@@ -301,7 +303,9 @@ fun PlayerScreen(
                     .padding(
                         top = 4.dp,
                         // 横屏：进度/标题/控件收进各页底部簇，只给底部导航胶囊留净空
-                        bottom = if (landscape) 60.dp else controlsBottomPadding + 104.dp
+                        bottom = if (landscape) {
+                            if (navBarOn) 60.dp else 16.dp
+                        } else controlsBottomPadding + 104.dp
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -1111,7 +1115,7 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
-/** 进度条 + 时间 — 自带状态订阅，只重组自身；主色→白 渐变 + 发光圆点（模块 B） */
+/** 进度条 + 时间 — 发光胶囊进度条（Capsule Bloom），独立组合避免整页重组（模块 B） */
 @Composable
 internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color) {
     val uiState by viewModel.uiState.collectAsState()
@@ -1119,47 +1123,13 @@ internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color) {
     val currentPosition = uiState.currentPosition
     val duration = uiState.duration
 
-    Canvas(
-        modifier = Modifier.fillMaxWidth().height(24.dp).pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown()
-                viewModel.seekTo((down.position.x / size.width).coerceIn(0f, 1f))
-                down.consume()
-                drag(down.id) { change ->
-                    viewModel.seekTo((change.position.x / size.width).coerceIn(0f, 1f))
-                    change.consume()
-                }
-            }
-        }
-    ) {
-        val trackHeight = 3.5f.dp.toPx()
-        val dotRadius = 6f.dp.toPx()
-        val y = size.height / 2f
-        val w = size.width
-        val cornerRadius = 1.75.dp.toPx()
-
-        drawRoundRect(
-            ProgressInactive, Offset(0f, y - trackHeight / 2f),
-            Size(w, trackHeight), CornerRadius(cornerRadius)
-        )
-        val activeWidth = w * progress
-        if (activeWidth > 0f) {
-            // 激活段：封面主色 → 白 渐变
-            drawRoundRect(
-                brush = Brush.horizontalGradient(listOf(accent, Color.White)),
-                topLeft = Offset(0f, y - trackHeight / 2f),
-                size = Size(activeWidth, trackHeight),
-                cornerRadius = CornerRadius(cornerRadius)
-            )
-            // 圆点光晕
-            drawCircle(
-                accent.copy(alpha = 0.30f),
-                radius = dotRadius * 2.4f,
-                center = Offset(activeWidth, y)
-            )
-        }
-        drawCircle(Color.White, dotRadius, Offset(activeWidth, y))
-    }
+    GlowProgressBar(
+        value = progress,
+        accent = accent,
+        modifier = Modifier.fillMaxWidth().height(28.dp),
+        onSeek = { viewModel.seekTo(it) },
+        onSeekFinished = { viewModel.seekTo(it) }
+    )
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(formatTime(currentPosition), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))

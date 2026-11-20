@@ -104,8 +104,12 @@ class MainActivity : ComponentActivity() {
                 val saveableStateHolder = rememberSaveableStateHolder()
 
                 var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+                // 播放页开关（设置页「界面」）：关掉后 pager 从 4 页变 3 页
+                val playerPageOn by com.whale.music.util.DisplayPrefs.playerPageEnabled.collectAsState()
+                // 页面 id 映射：0 播放 / 1 发现 / 2 音乐库 / 3 设置
+                val pageIds = if (playerPageOn) listOf(0, 1, 2, 3) else listOf(1, 2, 3)
                 // 四页 pager：播放器 / 发现 / 音乐库 / 设置
-                val pagerState = rememberPagerState(initialPage = selectedTab) { 4 }
+                val pagerState = rememberPagerState(initialPage = selectedTab.coerceAtMost(pageIds.size - 1)) { pageIds.size }
                 val tabScope = rememberCoroutineScope()
                 val canReadAudio by hasAudioPermission.collectAsState()
 
@@ -142,9 +146,23 @@ class MainActivity : ComponentActivity() {
 
                 // 迷你条是否收起成 CD 按钮（下滑收起 / 点击 CD 展开）
                 var miniCollapsed by rememberSaveable { mutableStateOf(false) }
+                // 播放页关掉后：点迷你条仍以全屏浮层打开播放页
+                var showPlayerOverlay by rememberSaveable { mutableStateOf(false) }
 
                 LaunchedEffect(pagerState) {
                     snapshotFlow { pagerState.currentPage }.collect { selectedTab = it }
+                }
+
+                // 播放页开关切换后停留在设置页（开关在设置页里操作）；打开开关时收掉浮层
+                var prevPlayerPageOn by remember { mutableStateOf(playerPageOn) }
+                LaunchedEffect(playerPageOn) {
+                    if (playerPageOn != prevPlayerPageOn) {
+                        prevPlayerPageOn = playerPageOn
+                        if (playerPageOn) showPlayerOverlay = false
+                        val idx = pageIds.indexOf(3)
+                        selectedTab = idx
+                        pagerState.animateScrollToPage(idx)
+                    }
                 }
 
                 // 不在播放页时，返回键先回播放页（相当于「收起」）
@@ -160,7 +178,9 @@ class MainActivity : ComponentActivity() {
                     startup.maybeAutoPlay()
                 }
 
-                val onPlayerPage = selectedTab == 0
+                val onPlayerPage = playerPageOn && selectedTab == 0
+                // 底部导航栏开关（设置页「界面」，默认开启）
+                val navBarOn by com.whale.music.util.DisplayPrefs.navBarEnabled.collectAsState()
                 // 横屏：底部簇（导航+迷你条）紧凑化，少占屏幕
                 val landscape = LocalConfiguration.current.let {
                     it.screenWidthDp > it.screenHeightDp
@@ -189,8 +209,9 @@ class MainActivity : ComponentActivity() {
                                 ),
                                 snapPositionalThreshold = 0.28f
                             ),
-                            key = { it }
+                            key = { pageIds[it] }
                         ) { page ->
+                            val pageId = pageIds[page]
                             // 页面随滑动进度做缩放 / 圆角 / 透明度过渡，像玻璃卡片层叠
                             Box(
                                 modifier = Modifier
@@ -211,15 +232,16 @@ class MainActivity : ComponentActivity() {
                                         clip = q > 0.002f
                                     }
                             ) {
-                                saveableStateHolder.SaveableStateProvider(page) {
-                                    when (page) {
+                                saveableStateHolder.SaveableStateProvider(pageId) {
+                                    when (pageId) {
                                         // 第一页就是播放器：打开 App 直接看到大封面
                                         0 -> PlayerScreen(
                                             modifier = Modifier.fillMaxSize(),
-                                            controlsBottomPadding = 92.dp,
+                                            controlsBottomPadding = if (navBarOn) 92.dp else 24.dp,
                                             onOpenSettings = {
-                                                selectedTab = 3
-                                                tabScope.launch { pagerState.animateScrollToPage(3) }
+                                                val idx = pageIds.indexOf(3)
+                                                selectedTab = idx
+                                                tabScope.launch { pagerState.animateScrollToPage(idx) }
                                             }
                                         )
 
@@ -260,63 +282,106 @@ class MainActivity : ComponentActivity() {
                             onNext = playerVm::next,
                             onPrevious = playerVm::previous,
                             onOpen = {
-                                selectedTab = 0
-                                tabScope.launch { pagerState.animateScrollToPage(0) }
+                                if (playerPageOn) {
+                                    selectedTab = 0
+                                    tabScope.launch { pagerState.animateScrollToPage(0) }
+                                } else {
+                                    // 播放页关掉了：点迷你条以全屏浮层打开播放页
+                                    showPlayerOverlay = true
+                                }
                             },
                             modifier = Modifier
                                 .padding(horizontal = if (landscape) 12.dp else 16.dp)
-                                .padding(bottom = if (landscape) 58.dp else 92.dp)
+                                .padding(
+                                    bottom = when {
+                                        !navBarOn -> if (landscape) 12.dp else 16.dp
+                                        landscape -> 58.dp
+                                        else -> 92.dp
+                                    }
+                                )
                         )
                     }
 
-                    // 底部导航栏
-                    SimpleBottomTabs(
-                        backdrop = backdrop,
-                        selectedIndex = selectedTab,
-                        liveFraction = {
-                            pagerState.currentPage + pagerState.currentPageOffsetFraction
-                        },
-                        onTabSelected = { index ->
-                            selectedTab = index
-                            tabScope.launch { pagerState.animateScrollToPage(index) }
-                        },
-                        tabLabels = listOf(
-                            stringResource(R.string.tab_player),
-                            stringResource(R.string.tab_discover),
-                            stringResource(R.string.tab_library),
-                            stringResource(R.string.tab_settings)
-                        ),
-                        tabContent = { index, isSelected ->
-                            val icon = when (index) {
-                                0 -> Icons.Default.MusicNote
-                                1 -> Icons.Default.Explore
-                                2 -> Icons.AutoMirrored.Filled.QueueMusic
-                                else -> Icons.Default.Settings
-                            }
-                            val iconSize by animateDpAsState(
-                                targetValue = (if (isSelected) 25.dp else 21.dp) *
-                                    (if (landscape) 0.82f else 1f),
-                                animationSpec = spring(dampingRatio = 0.45f, stiffness = 620f),
-                                label = "tabIconSize"
-                            )
-                            val iconAlpha by animateFloatAsState(
-                                targetValue = if (isSelected) 1f else 0.42f,
-                                animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
-                                label = "tabIconAlpha"
-                            )
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = iconAlpha),
-                                modifier = Modifier.size(iconSize)
-                            )
-                        },
+                    // 底部导航栏（设置页「界面」可隐藏；关掉后左右滑动切页）
+                    AnimatedVisibility(
+                        visible = navBarOn,
+                        enter = fadeIn(tween(180)),
+                        exit = fadeOut(tween(150)),
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .width(if (landscape) 196.dp else 232.dp)
-                            .padding(bottom = if (landscape) 12.dp else 28.dp)
                             .zIndex(3f)
-                    )
+                    ) {
+                        SimpleBottomTabs(
+                            backdrop = backdrop,
+                            selectedIndex = selectedTab,
+                            liveFraction = {
+                                pagerState.currentPage + pagerState.currentPageOffsetFraction
+                            },
+                            onTabSelected = { index ->
+                                selectedTab = index
+                                tabScope.launch { pagerState.animateScrollToPage(index) }
+                            },
+                            tabLabels = pageIds.map { id ->
+                                stringResource(
+                                    when (id) {
+                                        0 -> R.string.tab_player
+                                        1 -> R.string.tab_discover
+                                        2 -> R.string.tab_library
+                                        else -> R.string.tab_settings
+                                    }
+                                )
+                            },
+                            tabContent = { index, isSelected ->
+                                val icon = when (pageIds[index]) {
+                                    0 -> Icons.Default.MusicNote
+                                    1 -> Icons.Default.Explore
+                                    2 -> Icons.AutoMirrored.Filled.QueueMusic
+                                    else -> Icons.Default.Settings
+                                }
+                                val iconSize by animateDpAsState(
+                                    targetValue = (if (isSelected) 25.dp else 21.dp) *
+                                        (if (landscape) 0.82f else 1f),
+                                    animationSpec = spring(dampingRatio = 0.45f, stiffness = 620f),
+                                    label = "tabIconSize"
+                                )
+                                val iconAlpha by animateFloatAsState(
+                                    targetValue = if (isSelected) 1f else 0.42f,
+                                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
+                                    label = "tabIconAlpha"
+                                )
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = iconAlpha),
+                                    modifier = Modifier.size(iconSize)
+                                )
+                            },
+                            modifier = Modifier
+                                .width(if (landscape) 196.dp else 232.dp)
+                                .padding(bottom = if (landscape) 12.dp else 28.dp)
+                        )
+                    }
+
+                    // ── 播放页全屏浮层（播放页关掉后点迷你条打开，返回键关）──
+                    if (!playerPageOn && showPlayerOverlay) {
+                        BackHandler { showPlayerOverlay = false }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(4f)
+                        ) {
+                            PlayerScreen(
+                                modifier = Modifier.fillMaxSize(),
+                                controlsBottomPadding = if (navBarOn) 92.dp else 24.dp,
+                                onOpenSettings = {
+                                    showPlayerOverlay = false
+                                    val idx = pageIds.indexOf(3)
+                                    selectedTab = idx
+                                    tabScope.launch { pagerState.animateScrollToPage(idx) }
+                                }
+                            )
+                        }
+                    }
 
                     // ── 应用内更新弹窗：盖在所有页面之上 ──
                     when (updateState) {

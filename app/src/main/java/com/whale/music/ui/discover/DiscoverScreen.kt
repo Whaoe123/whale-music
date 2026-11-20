@@ -85,8 +85,10 @@ import com.whale.music.data.sync.SongKey
 import com.whale.music.ui.components.PressableIconButton
 import com.whale.music.ui.components.pressScale
 
-/** 底部导航 + 迷你条占位高度（与第二页一致） */
-private val BOTTOM_RESERVE = 170.dp
+/** 底部导航 + 迷你条占位高度（与第二页一致）；导航关掉（设置页「界面」）时只给迷你条留 */
+@Composable
+private fun bottomReserve(): androidx.compose.ui.unit.Dp =
+    if (com.whale.music.util.DisplayPrefs.navBarEnabled.collectAsState().value) 170.dp else 100.dp
 
 /**
  * 爱心是否点亮：本地在线收藏按 songId 判定；网易云红心按歌名+歌手归一化 key 判定。
@@ -383,7 +385,7 @@ fun DiscoverScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(bottom = BOTTOM_RESERVE),
+                        contentPadding = PaddingValues(bottom = bottomReserve()),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         if (uiState.searching) {
@@ -474,7 +476,7 @@ fun DiscoverScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(bottom = BOTTOM_RESERVE),
+                        contentPadding = PaddingValues(bottom = bottomReserve()),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         // ── hero 三卡：每日私人推荐 / 我喜欢 / 私人FM ──
@@ -1476,7 +1478,7 @@ private fun RemoteSongList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(2.dp),
-        contentPadding = PaddingValues(bottom = BOTTOM_RESERVE)
+        contentPadding = PaddingValues(bottom = bottomReserve())
     ) {
         itemsIndexed(songs, key = { i, s -> "${s.songId}#$i" }) { index, song ->
             RemoteSongCard(

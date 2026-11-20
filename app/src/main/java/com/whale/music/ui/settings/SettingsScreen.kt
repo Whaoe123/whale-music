@@ -90,8 +90,12 @@ fun SettingsScreen(
     // Hi·Res 金标（DisplayPrefs StateFlow，改完播放页立刻生效）
     val hiresEnabled by viewModel.hiresEnabled.collectAsState()
     val hiresScale by viewModel.hiresScale.collectAsState()
-    // 分区折叠：默认只展开「播放」，其余点标题展开（页面更整洁）
+    // 底部导航栏 / 播放页开关（默认开启）
+    val navBarEnabled by viewModel.navBarEnabled.collectAsState()
+    val playerPageEnabled by viewModel.playerPageEnabled.collectAsState()
+    // 分区折叠：默认展开「播放 / 界面」，其余点标题展开（页面更整洁）
     var secPlay by rememberSaveable { mutableStateOf(true) }
+    var secUi by rememberSaveable { mutableStateOf(true) }
     var secBadge by rememberSaveable { mutableStateOf(false) }
     var secUpdate by rememberSaveable { mutableStateOf(false) }
     var secCache by rememberSaveable { mutableStateOf(false) }
@@ -134,8 +138,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(horizontal = 20.dp)
-                // 底部给迷你条 + 底部导航让位（与发现页一致）
-                .padding(bottom = 170.dp),
+                // 底部给迷你条 + 底部导航让位（导航关掉时只给迷你条留）
+                .padding(bottom = if (navBarEnabled) 170.dp else 100.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
         Spacer(Modifier.height(6.dp))
@@ -241,6 +245,55 @@ fun SettingsScreen(
                         thumbColor = Color(0xFF60A5FA),
                         activeTrackColor = Color(0xFF60A5FA),
                         inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                    )
+                )
+            }
+        }
+
+        // ───────── 界面（播放页 / 底部导航栏开关） ─────────
+        SettingsCard(
+            title = "界面",
+            expanded = secUi,
+            onToggle = { secUi = !secUi }
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("播放页", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "关掉后隐藏播放页，用迷你播放条控制播放",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = playerPageEnabled,
+                    onCheckedChange = { viewModel.setPlayerPageEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Color(0xFF60A5FA),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
+                    )
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            SettingsDivider()
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("底部导航栏", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        "关掉后隐藏底部导航，左右滑动切换页面",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = navBarEnabled,
+                    onCheckedChange = { viewModel.setNavBarEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = Color(0xFF60A5FA),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
                     )
                 )
             }
