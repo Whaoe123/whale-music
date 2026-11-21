@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
@@ -186,6 +187,7 @@ fun PlayerScreen(
     var moreMenu by remember { mutableStateOf(false) }
     var showAddSheet by remember { mutableStateOf(false) }
     var showLyricSettings by remember { mutableStateOf(false) }
+    var showFxSheet by remember { mutableStateOf(false) }
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
     var lyrics by remember { mutableStateOf<List<com.whale.music.data.remote.LyricLine>>(emptyList()) }
     LaunchedEffect(currentSong?.id) {
@@ -232,6 +234,10 @@ fun PlayerScreen(
     // 歌词设置面板：开着时返回键先关面板
     BackHandler(enabled = showLyricSettings) {
         showLyricSettings = false
+    }
+    // 音效面板：开着时返回键先关面板
+    BackHandler(enabled = showFxSheet) {
+        showFxSheet = false
     }
 
     Box(
@@ -325,6 +331,7 @@ fun PlayerScreen(
                     Spacer(Modifier.weight(1f))
                     PlayerTopActions(
                         onOpenLyricSettings = { showLyricSettings = true },
+                        onOpenFx = { showFxSheet = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
                         onAddToPlaylist = { showAddSheet = true },
@@ -389,7 +396,7 @@ fun PlayerScreen(
                         )
                     }
 
-                    // 封面页：黑胶唱片，上下滑切歌，点封面进歌词
+                    // 封面页：黑胶唱片，上下滑切歌，点封面进歌词；底部实时频谱柱
                     page == 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Box(
                             Modifier
@@ -410,6 +417,16 @@ fun PlayerScreen(
                                 )
                             }
                         }
+                        // 频谱柱：贴在封面页底部（开关在音效面板里；暂停时自然回落）
+                        SpectrumBars(
+                            active = isPlaying,
+                            accent = accent,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth(0.86f)
+                                .height(46.dp)
+                                .padding(bottom = 6.dp)
+                        )
                     }
 
                     // 歌词页：全屏主题歌词（玻璃底板 + 5 种样式 + 设置面板）
@@ -472,6 +489,7 @@ fun PlayerScreen(
                 ) {
                     PlayerTopActions(
                         onOpenLyricSettings = { showLyricSettings = true },
+                        onOpenFx = { showFxSheet = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
                         onAddToPlaylist = { showAddSheet = true },
@@ -512,6 +530,14 @@ fun PlayerScreen(
             )
         }
 
+        // ── 音效均衡面板（玻璃材质：EQ 预设/滑杆 + 频谱开关）──
+        if (showFxSheet) {
+            EqualizerSheet(
+                bgBackdrop = bgBackdrop,
+                onDismiss = { showFxSheet = false }
+            )
+        }
+
         // ── 加入歌单 ──
         if (showAddSheet) {
             val playing = currentSong
@@ -543,10 +569,11 @@ fun PlayerScreen(
     }
 }
 
-/** 顶栏右侧动作：歌词设置 + 更多菜单（竖屏顶栏 / 横屏右上浮层共用） */
+/** 顶栏右侧动作：歌词设置 + 音效 + 更多菜单（竖屏顶栏 / 横屏右上浮层共用） */
 @Composable
 private fun PlayerTopActions(
     onOpenLyricSettings: () -> Unit,
+    onOpenFx: () -> Unit,
     moreMenu: Boolean,
     onMoreMenuChange: (Boolean) -> Unit,
     onAddToPlaylist: () -> Unit,
@@ -562,6 +589,19 @@ private fun PlayerTopActions(
         Icon(
             Icons.Default.Settings,
             contentDescription = "歌词设置",
+            tint = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.size(19.dp)
+        )
+    }
+    // 音效均衡（EQ + 频谱开关）
+    PressableIconButton(
+        onClick = onOpenFx,
+        buttonSize = 44.dp,
+        baseAlpha = 0f
+    ) {
+        Icon(
+            Icons.Default.Equalizer,
+            contentDescription = "音效均衡",
             tint = Color.White.copy(alpha = 0.7f),
             modifier = Modifier.size(19.dp)
         )
@@ -595,6 +635,10 @@ private fun PlayerTopActions(
             DropdownMenuItem(
                 text = { Text("播放队列", fontSize = 13.sp, color = Color.White) },
                 onClick = { onMoreMenuChange(false); onGoQueue() }
+            )
+            DropdownMenuItem(
+                text = { Text("音效均衡", fontSize = 13.sp, color = Color.White) },
+                onClick = { onMoreMenuChange(false); onOpenFx() }
             )
         }
     }

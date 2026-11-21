@@ -1,14 +1,20 @@
 package com.whale.music.player
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioOffloadSupport
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -19,6 +25,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.whale.music.MainActivity
 import com.whale.music.R
 import com.whale.music.data.repository.MusicRepository
+import com.whale.music.player.audio.EqProcessor
+import com.whale.music.player.audio.PcmTapProcessor
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -113,7 +121,27 @@ class MusicPlayerService : MediaLibraryService() {
             }
         )
 
-        val player = ExoPlayer.Builder(this).build().apply {
+        // 音频链路：EQ → PCM 取样器。
+        // 取样器放最后，可视化读到的是**用户实际听到的声音**（开了低音增强，
+        // 柱子也真的往低频那边动）；反过来就会出现「调了音效但柱子没反应」。
+        //
+        // ⚠️ 必须显式关掉 Audio Offload：硬件 offload 会把编码流直接送给 DSP，
+        // 不做 PCM 解码，整条 AudioProcessor 链会被完全绕过 —— 表现就是
+        // 「某些机型 / 某些格式下所有音效静默失效」。
+        //
+        // ⚠️ 必须保持 DefaultAudioSink 默认浮点关闭（setEnableFloatOutput(false)）：
+        //    media3 在 enableFloatOutput=true 且播放 24/32bit Hi-Res 音轨时可能
+        //    跳过整个 audioProcessorChain（均衡器、频谱全失效）。各 Processor 已
+        //    通过 PcmCodec 原生解码 16/24/32/Float 并在内部全程 32/64 位处理。
+        val audioSink = DefaultAudioSink.Builder(this)
+            .setAudioOffloadSupportProvider { _, _ -> AudioOffloadSupport.DEFAULT_UNSUPPORTED }
+            .setEnableFloatOutput(false)
+            .setAudioProcessors(arrayOf<AudioProcessor>(EqProcessor(), PcmTapProcessor()))
+            .build()
+
+        val player = ExoPlayer.Builder(this)
+            .setRenderersFactory(SinkRenderersFactory(this, audioSink))
+            .build().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -156,4 +184,23 @@ class MusicPlayerService : MediaLibraryService() {
     private companion object {
         const val ROOT_ID = "ohmusic_root"
     }
+}
+
+/**
+ * 唯一目的：把带 [EqProcessor] / [PcmTapProcessor] 的 [AudioSink] 交给 ExoPlayer。
+ *
+ * `ExoPlayer.Builder` 没有 `setAudioSink`，注入音频链路的官方入口就是
+ * [DefaultRenderersFactory.buildAudioSink]。
+ */
+@OptIn(UnstableApi::class)
+private class SinkRenderersFactory(
+    context: Context,
+    private val audioSink: AudioSink
+) : DefaultRenderersFactory(context) {
+
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean
+    ): AudioSink = audioSink
 }
