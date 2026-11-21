@@ -203,6 +203,10 @@ fun DiscoverScreen(
     var barBounds by remember { mutableStateOf<Rect?>(null) }
     var titleBounds by remember { mutableStateOf<Rect?>(null) }
     var subtitleBounds by remember { mutableStateOf<Rect?>(null) }
+    // 顶栏块高度：状态栏 + 8 + 顶栏行高 + 12（浮层占位 / 列表顶部留白 / 纱帘高度共用）
+    val headerRowH = barBounds?.height?.let { with(density) { it.toDp() } } ?: 46.dp
+    val headerSpace = headerRowH + 12.dp
+    val headerBlockSpace = statusBarTop + 8.dp + headerSpace
 
     Box(
         modifier = modifier
@@ -234,27 +238,9 @@ fun DiscoverScreen(
         }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
 
-        // ── 顶部渐变半透明幕（由上往下：深 → 透）：顶栏收起时淡入，托住归中的文字 ──
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(statusBarTop + 76.dp)
-                .graphicsLayer { alpha = topBarCollapse }
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            Color.Black.copy(alpha = 0.62f),
-                            Color.Black.copy(alpha = 0.30f),
-                            Color.Black.copy(alpha = 0f)
-                        )
-                    )
-                )
-        )
-
         Column(modifier = Modifier.fillMaxSize()) {
-            Spacer(Modifier.height(statusBarTop + 8.dp))
-
             if (uiState.openedPlaylist != null) {
+                Spacer(Modifier.height(statusBarTop + 8.dp))
                 // ── 歌单详情视图 ──
                 PlaylistDetailView(
                     playlist = uiState.openedPlaylist!!,
@@ -271,103 +257,14 @@ fun DiscoverScreen(
                     onLongPress = { pendingAdd = it }
                 )
             } else {
-                // ── 顶栏：尺寸与第二页完全一致（22sp 标题 / 11sp 副标题 / 44dp 图标按钮）──
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp)
-                        .onGloballyPositioned { barBounds = it.boundsInWindow() },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (ncmLogin == NcmLoginState.LOGGED_IN &&
-                                !ncmProfile?.nickname.isNullOrBlank()
-                            ) {
-                                "你好，${ncmProfile?.nickname}"
-                            } else {
-                                "你好"
-                            },
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .onGloballyPositioned { titleBounds = it.boundsInWindow() }
-                                .graphicsLayer {
-                                    val g = titleBounds ?: return@graphicsLayer
-                                    val bar = barBounds ?: return@graphicsLayer
-                                    // 逐行归中：以本行自身中心缩放，把中心送到顶栏正中
-                                    val s = 1f - 0.14f * topBarCollapse
-                                    scaleX = s
-                                    scaleY = s
-                                    translationX = topBarCollapse * (bar.center.x - g.center.x)
-                                }
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = if (ncmLogin == NcmLoginState.LOGGED_IN) {
-                                "搜索并播放网络歌曲 · 为你挑歌"
-                            } else {
-                                "搜索并播放网络歌曲 · 登录后更懂你"
-                            },
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.42f),
-                            modifier = Modifier
-                                .onGloballyPositioned { subtitleBounds = it.boundsInWindow() }
-                                .graphicsLayer {
-                                    val s2 = subtitleBounds ?: return@graphicsLayer
-                                    val bar = barBounds ?: return@graphicsLayer
-                                    val s = 1f - 0.14f * topBarCollapse
-                                    scaleX = s
-                                    scaleY = s
-                                    translationX = topBarCollapse * (bar.center.x - s2.center.x)
-                                }
-                        )
-                    }
-
-                    AnimatedVisibility(
-                        visible = !topBarCollapsed,
-                        enter = fadeIn(tween(160)),
-                        exit = fadeOut(tween(160))
-                    ) {
-                        PressableIconButton(
-                            onClick = {
-                                searchMode = !searchMode
-                                if (!searchMode) viewModel.clearSearch()
-                            },
-                            buttonSize = 44.dp,
-                            baseAlpha = 0.10f
-                        ) {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = "搜索",
-                                tint = Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.width(6.dp))
-
-                    AnimatedVisibility(
-                        visible = !topBarCollapsed,
-                        enter = fadeIn(tween(160)),
-                        exit = fadeOut(tween(160))
-                    ) {
-                        NcmAccountChip(
-                            loggedIn = ncmLogin == NcmLoginState.LOGGED_IN,
-                            nickname = ncmProfile?.nickname.orEmpty(),
-                            onClick = { loginStage = 1 }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
+                Box(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize()) {
 
                 // ── 搜索区（点顶栏搜索按钮展开）：单曲 / 歌单 两个 tab ──
                 if (searchMode) {
+                    // 状态栏留白 + 顶栏浮层占位（顶栏浮在列表之上）
+                    Spacer(Modifier.height(statusBarTop + 8.dp))
+                    Spacer(Modifier.height(headerSpace))
                     // tab 药丸：单曲（酷我 / lx 音源）· 歌单（网易云）
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -529,7 +426,8 @@ fun DiscoverScreen(
                     uiState.loading && uiState.recommend.isEmpty() && uiState.playlists.isEmpty() -> Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .padding(top = if (searchMode) 0.dp else headerBlockSpace),
                         contentAlignment = Alignment.Center
                     ) {
                         CircularProgressIndicator(
@@ -543,7 +441,10 @@ fun DiscoverScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(bottom = bottomReserve()),
+                        contentPadding = PaddingValues(
+                            top = if (searchMode) 0.dp else headerBlockSpace,
+                            bottom = bottomReserve()
+                        ),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         // ── hero 三卡：每日私人推荐 / 我喜欢 / 私人FM ──
@@ -712,7 +613,123 @@ fun DiscoverScreen(
                         }
                     }
                 }
+                    }
+                    // ── 顶栏纱帘：由上往下渐变半透明，上滑淡入，列表从底下穿过渐隐 ──
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(headerBlockSpace)
+                            .graphicsLayer { alpha = topBarCollapse }
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color.Black.copy(alpha = 0.72f),
+                                        Color.Black.copy(alpha = 0.38f),
+                                        Color.Black.copy(alpha = 0f)
+                                    )
+                                )
+                            )
+                    )
+                    // ── 顶栏浮层：浮在列表之上，上滑时文字归中、按钮隐藏 ──
+                    Column(Modifier.fillMaxWidth()) {
+                // ── 顶栏：尺寸与第二页完全一致（22sp 标题 / 11sp 副标题 / 44dp 图标按钮）──
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .onGloballyPositioned { barBounds = it.boundsInWindow() },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (ncmLogin == NcmLoginState.LOGGED_IN &&
+                                !ncmProfile?.nickname.isNullOrBlank()
+                            ) {
+                                "你好，${ncmProfile?.nickname}"
+                            } else {
+                                "你好"
+                            },
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .onGloballyPositioned { titleBounds = it.boundsInWindow() }
+                                .graphicsLayer {
+                                    val g = titleBounds ?: return@graphicsLayer
+                                    val bar = barBounds ?: return@graphicsLayer
+                                    // 逐行归中：以本行自身中心缩放，把中心送到顶栏正中
+                                    val s = 1f - 0.14f * topBarCollapse
+                                    scaleX = s
+                                    scaleY = s
+                                    translationX = topBarCollapse * (bar.center.x - g.center.x)
+                                }
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (ncmLogin == NcmLoginState.LOGGED_IN) {
+                                "搜索并播放网络歌曲 · 为你挑歌"
+                            } else {
+                                "搜索并播放网络歌曲 · 登录后更懂你"
+                            },
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.42f),
+                            modifier = Modifier
+                                .onGloballyPositioned { subtitleBounds = it.boundsInWindow() }
+                                .graphicsLayer {
+                                    val s2 = subtitleBounds ?: return@graphicsLayer
+                                    val bar = barBounds ?: return@graphicsLayer
+                                    val s = 1f - 0.14f * topBarCollapse
+                                    scaleX = s
+                                    scaleY = s
+                                    translationX = topBarCollapse * (bar.center.x - s2.center.x)
+                                }
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = !topBarCollapsed,
+                        enter = fadeIn(tween(160)),
+                        exit = fadeOut(tween(160))
+                    ) {
+                        PressableIconButton(
+                            onClick = {
+                                searchMode = !searchMode
+                                if (!searchMode) viewModel.clearSearch()
+                            },
+                            buttonSize = 44.dp,
+                            baseAlpha = 0.10f
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = "搜索",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(6.dp))
+
+                    AnimatedVisibility(
+                        visible = !topBarCollapsed,
+                        enter = fadeIn(tween(160)),
+                        exit = fadeOut(tween(160))
+                    ) {
+                        NcmAccountChip(
+                            loggedIn = ncmLogin == NcmLoginState.LOGGED_IN,
+                            nickname = ncmProfile?.nickname.orEmpty(),
+                            onClick = { loginStage = 1 }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                }
             }
+        }
         }
 
         // ── 底部消息条（样式与第二页一致）──
