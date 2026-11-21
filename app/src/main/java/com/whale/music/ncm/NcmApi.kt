@@ -562,6 +562,24 @@ object NcmApi {
         return result
     }
 
+    /**
+     * 带热度的单曲搜索（cloudsearch，POST 匿名可读）—— 发现页「网易云」音源。
+     * 与 [search] 的区别：返回体里带 pop（0-100），调用方按它降序排，最火的排最前。
+     */
+    suspend fun searchWithPop(session: NcmSession, keyword: String, limit: Int = 30): List<NcmSongDto> {
+        val form = "s=" + URLEncoder.encode(keyword, "UTF-8") +
+            "&type=1&limit=$limit&offset=0&total=true"
+        val json = NcmHttp.request(
+            "$BASE/api/cloudsearch/pc", session.cookieHeader(), "POST", form, session
+        )
+        val songs = json.optJSONObject("result")?.optJSONArray("songs") ?: return emptyList()
+        val result = mutableListOf<NcmSongDto>()
+        for (i in 0 until songs.length()) {
+            songs.optJSONObject(i)?.let { parseSong(it) }?.let { result.add(it) }
+        }
+        return result.sortedByDescending { it.pop }
+    }
+
     // ───────── 发现页：我的云歌单 / 私人FM / 歌单搜索 ─────────
 
     /** 发现页用的歌单卡片（我的云歌单 / 歌单搜索共用） */
@@ -659,7 +677,9 @@ object NcmApi {
             albumId = album?.optLong("id") ?: 0L,
             durationMs = o.optLong("dt").takeIf { it > 0 } ?: o.optLong("duration"),
             coverUrl = cover?.replace("http://", "https://")?.let { com.whale.music.util.CoverUrl.hd(it) },
-            fee = o.optInt("fee")
+            fee = o.optInt("fee"),
+            // cloudsearch 把 pop 返回成 100.0 这种小数，optInt 走 Double 会丢，统一取 double 再转
+            pop = o.optDouble("pop", 0.0).toInt().coerceIn(0, 100)
         )
     }
 }

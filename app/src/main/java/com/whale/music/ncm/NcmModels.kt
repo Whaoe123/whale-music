@@ -18,7 +18,9 @@ data class NcmSongDto(
     val albumId: Long,
     val durationMs: Long,
     val coverUrl: String?,   // https 封面
-    val fee: Int
+    val fee: Int,
+    /** 热度 0-100（cloudsearch 返回；旧接口没有则为 0）—— 搜索结果按它降序，最火的排最前 */
+    val pop: Int = 0
 )
 
 /** 扫码登录状态（与网易返回码一致；RISK_CONTROLLED = -462 网关风控；BLOCKED = 8821 账号级风控拒绝签发登录态） */

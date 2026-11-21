@@ -305,6 +305,7 @@ fun DiscoverScreen(
                     // ── 音源切换（仅单曲 tab）：酷我 / 已导入的 lx 脚本 ──
                     if (uiState.searchTab == "song") {
                         val sources = buildList {
+                            add("ncm" to "网易云")
                             add("kw" to "酷我")
                             lxScripts.filter { it.enabled }.forEach { add("lx:${it.id}" to it.name) }
                         }

@@ -51,8 +51,8 @@ data class DiscoverUiState(
     val searching: Boolean = false,
     /** 搜索 tab："song" = 单曲（酷我 / lx 音源）；"playlist" = 歌单（网易云） */
     val searchTab: String = "song",
-    /** 音源切换："kw" = 酷我；"lx:<scriptId>" = 洛雪自定义音源 */
-    val searchSource: String = "kw",
+    /** 音源切换："ncm" = 网易云（带热度排序）；"kw" = 酷我；"lx:<scriptId>" = 洛雪自定义音源 */
+    val searchSource: String = "ncm",
     val searchResults: List<RemoteSong>? = null,   // null = 非搜索态
     /** 「歌单」tab 的搜索结果（与 searchResults 互斥） */
     val playlistResults: List<WyPlaylist>? = null,
@@ -267,10 +267,13 @@ class DiscoverViewModel @Inject constructor(
             } else {
                 val results = withContext(Dispatchers.IO) {
                     try {
-                        if (source.startsWith("lx:")) {
-                            lxManager.search(q, source.removePrefix("lx:"), 30)
-                        } else {
-                            KwSource.search(q)
+                        when {
+                            source == "ncm" ->
+                                // 网易云：cloudsearch 带 pop 热度，已在接口内按热度降序
+                                NcmApi.searchWithPop(session, q).map { it.toRemoteSong() }
+                            source.startsWith("lx:") ->
+                                lxManager.search(q, source.removePrefix("lx:"), 30)
+                            else -> KwSource.search(q)
                         }
                     } catch (e: Exception) {
                         emptyList<RemoteSong>()
