@@ -6,7 +6,12 @@ import android.provider.OpenableColumns
 import android.util.Log
 import com.whale.music.data.model.QsTrack
 import com.whale.music.data.model.RemoteSong
+import com.whale.music.data.remote.KwSource
 import com.whale.music.data.remote.SongMatcher
+import com.whale.music.ncm.NcmApi
+import com.whale.music.ncm.NcmSession
+import com.whale.music.ncm.NcmSongDto
+import com.whale.music.util.CoverUrl
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +37,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class LxSourceManager @Inject constructor(
-    @param:ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context,
+    private val session: NcmSession
 ) {
 
     data class LxScript(
@@ -215,16 +221,23 @@ class LxSourceManager @Inject constructor(
     // ───────── 搜索 ─────────
 
     /**
-     * 按脚本搜索（脚本内可能有多个 source 条目，逐个调 musicSearch 后按
-     * 「歌名+歌手」去重合并），映射成 RemoteSong（source="lx"）。
-     * 同时把脚本返回的 musicInfo 落缓存 —— 取流要用。
+     * 按脚本搜索，映射成 RemoteSong（source="lx"），并把取流要的 musicInfo 落缓存。
+     *
+     * 两条路径（借鉴 Sonance 的「搜索与取流分离」）：
+     * - 脚本自带 `musicSearch` → 逐个 source 调脚本搜，原样落 musicInfo；
+     * - 脚本只有 `musicUrl`（Hello World / 星海这类聚合源）→ **搜索走内置曲库**
+     *   （kw→酷我、wy→网易），拿到平台原生 id 后由 App 按平台拼好 musicInfo，
+     *   取流仍然只交给脚本。这样「导入即用」，不依赖脚本会不会搜。
      */
     suspend fun search(query: String, scriptId: String, pageSize: Int = 30): List<RemoteSong> =
         withContext(Dispatchers.IO) {
             val script = scriptOf(scriptId)?.takeIf { it.enabled } ?: return@withContext emptyList()
             val rt = runtimeFor(script) ?: return@withContext emptyList()
             val probe = probes[script.id] ?: return@withContext emptyList()
-            if (!probe.hasSearch) return@withContext emptyList()
+
+            if (!probe.hasSearch) {
+                return@withContext builtinSearch(query, script, probe, pageSize)
+            }
 
             val out = LinkedHashMap<String, RemoteSong>()
             for (src in probe.sources) {
@@ -243,6 +256,102 @@ class LxSourceManager @Inject constructor(
             saveInfo()
             out.values.toList()
         }
+
+    /**
+     * 脚本无 `musicSearch` 时的搜索（Sonance `LxCatalogProvider` 的思路）：
+     * 只搜**我们有内置曲库、且脚本声明支持**的平台（kw / wy），
+     * 平台原生 id 拼进 musicInfo 后照常交给脚本 `musicUrl` 取流。
+     */
+    private suspend fun builtinSearch(
+        query: String,
+        script: LxScript,
+        probe: LxRuntime.Probe,
+        pageSize: Int
+    ): List<RemoteSong> {
+        val out = LinkedHashMap<String, RemoteSong>()
+        for (platform in BUILTIN_CATALOG.keys) {
+            if (platform !in probe.sources) continue
+            val hits = when (platform) {
+                "kw" -> runCatching { KwSource.search(query, pageSize = pageSize) }
+                    .getOrDefault(emptyList())
+                "wy" -> runCatching {
+                    NcmApi.search(session, query, limit = pageSize).map { it.toRemoteHit() }
+                }.getOrDefault(emptyList())
+                else -> emptyList()
+            }
+            for (hit in hits) {
+                val key = SongMatcher.normalizeTitle(hit.title) + "|" +
+                    SongMatcher.normalizeTitle(hit.artist)
+                if (key in out) continue
+                val nativeId = hit.rid.toString()
+                // 同一首在 kw/wy 各有一条时只留先到的（kw 优先：搜索带缓存、时长更准）
+                val rid = ridOf(script.id, "${platform}_$nativeId")
+                val songId = "lx_$rid"
+                musicInfo[songId] = JSONObject()
+                    .put("__script", script.id)
+                    .put("__source", platform)
+                    .put("info", buildMusicInfo(platform, nativeId, hit))
+                out[key] = RemoteSong(
+                    songId = songId,
+                    source = "lx",
+                    rid = rid,
+                    title = hit.title,
+                    artist = hit.artist,
+                    album = hit.album,
+                    coverUrl = hit.coverUrl,
+                    duration = hit.duration
+                )
+                if (out.size >= pageSize) break
+            }
+            if (out.size >= pageSize) break
+        }
+        saveInfo()
+        if (out.isEmpty()) {
+            Log.w("LxSource", "脚本[${script.name}]无 musicSearch，内置曲库也没搜到「$query」")
+        }
+        return out.values.toList()
+    }
+
+    /**
+     * 按 Sonance `LxRemoteId.buildMusicInfoJson` 的格式拼 musicInfo：
+     * 通用字段（source / name / singer / albumName / interval）
+     * + 各平台 id 字段（kw: songmid·id·rid；wy: songmid·id）。
+     * 两个脚本的 `idField` 都从这些字段取值，缺一个就可能取不到 id。
+     */
+    private fun buildMusicInfo(platform: String, nativeId: String, hit: RemoteSong): JSONObject =
+        JSONObject().apply {
+            put("source", platform)
+            put("name", hit.title)
+            put("singer", hit.artist)
+            put("albumName", hit.album)
+            put("interval", (hit.duration / 1000L).coerceAtLeast(0L).toInt())
+            when (platform) {
+                "kw" -> {
+                    put("songmid", nativeId)
+                    put("id", nativeId)
+                    put("rid", nativeId)
+                }
+                "wy" -> {
+                    put("songmid", nativeId)
+                    put("id", nativeId)
+                }
+            }
+        }
+
+    /** 网易搜索结果 → 只带元数据的占位条目（rid = 网易原生 id，供 [buildMusicInfo] 用） */
+    private fun NcmSongDto.toRemoteHit() = RemoteSong(
+        songId = "wy_$id",
+        source = "wy",
+        rid = id,
+        title = title,
+        artist = artist,
+        album = album,
+        coverUrl = CoverUrl.hd(coverUrl.orEmpty()),
+        duration = durationMs
+    )
+
+    /** 我们有内置曲库、可用来替脚本搜的平台（顺序即优先级：kw 先、wy 后） */
+    private val BUILTIN_CATALOG = linkedMapOf("kw" to Unit, "wy" to Unit)
 
     /** 解析 musicSearch 返回的 {list:[...]}；sourceKey 记进 musicInfo 供取流用 */
     private fun parseHits(payload: String, scriptId: String, sourceKey: String): List<RemoteSong> {

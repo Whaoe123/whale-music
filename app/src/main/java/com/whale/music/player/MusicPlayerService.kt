@@ -10,8 +10,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
@@ -141,6 +146,11 @@ class MusicPlayerService : MediaLibraryService() {
 
         val player = ExoPlayer.Builder(this)
             .setRenderersFactory(SinkRenderersFactory(this, audioSink))
+            .setMediaSourceFactory(
+                // B 站 CDN（bilivideo.com）实测拒绝移动 UA / 缺 Referer 的请求：一律 403。
+                // 本地文件与其它音源不受影响 —— 只对 bilibili 域注入桌面 UA + Referer。
+                DefaultMediaSourceFactory(DefaultDataSource.Factory(this, BiliAwareHttpFactory()))
+            )
             .build().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -203,4 +213,51 @@ private class SinkRenderersFactory(
         enableFloatOutput: Boolean,
         enableAudioTrackPlaybackParams: Boolean
     ): AudioSink = audioSink
+}
+
+/**
+ * B 站音频流的请求头补丁。
+ *
+ * 实测（2026-11）：`*.bilivideo.com` 的 CDN 对**移动 UA** 与**缺 Referer** 一律回 403
+ * （openresty 层直接拒，换 okhttp / 桌面 Chrome UA 才放行）。而 ExoPlayer 默认
+ * 带的是设备 UA、不带 Referer —— 表现就是「B 站兜底搜得到、匹配得上，一点播放就失败」。
+ *
+ * 只对 bilibili 域注入桌面 UA + Referer；本地文件与其它音源的请求头保持原样。
+ */
+@OptIn(UnstableApi::class)
+private class BiliAwareHttpFactory : DataSource.Factory {
+
+    private val delegate = DefaultHttpDataSource.Factory()
+
+    override fun createDataSource(): DataSource = object : DataSource {
+        private val http = delegate.createDataSource() as DefaultHttpDataSource
+
+        override fun open(dataSpec: DataSpec): Long {
+            val host = dataSpec.uri.host.orEmpty()
+            if (host.contains("bilibili") || host.contains("bilivideo")) {
+                http.setRequestProperty("User-Agent", DESKTOP_UA)
+                http.setRequestProperty("Referer", "https://www.bilibili.com/")
+            } else {
+                // 同一个实例会被复用：离开 B 站域要把头摘掉，别污染下一首
+                http.clearRequestProperty("User-Agent")
+                http.clearRequestProperty("Referer")
+            }
+            return http.open(dataSpec)
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int = http.read(buffer, offset, length)
+        override fun getUri(): android.net.Uri? = http.uri
+        override fun getResponseHeaders(): Map<String, List<String>> = http.responseHeaders
+        override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) =
+            http.addTransferListener(transferListener)
+
+        override fun close() = http.close()
+    }
+
+    private companion object {
+        /** 桌面 Chrome —— B 站 CDN 只放行这个档位的 UA（移动 UA 必 403） */
+        const val DESKTOP_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    }
 }
