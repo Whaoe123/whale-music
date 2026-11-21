@@ -95,8 +95,12 @@ fun rememberSmoothPosition(positionMs: Long, isPlaying: Boolean): State<Long> {
     val pos = remember { mutableLongStateOf(positionMs) }
     val sample = remember { longArrayOf(positionMs, 0L) }
     LaunchedEffect(positionMs) {
+        // 必须先取到帧时间戳，再**同一帧内**一起写 sample[0]/sample[1]：
+        // 若先写新位置、下一帧才写时间戳，窗口期播放环会用「新位置 + 旧时间戳」
+        // 算出超前约半秒的假进度 —— 歌词进度线会周期性往前弹一下再缩回（一闪一闪）。
+        val frameTime = withFrameNanos { it }
         sample[0] = positionMs
-        sample[1] = withFrameNanos { it }
+        sample[1] = frameTime
         if (!isPlaying) pos.longValue = positionMs
     }
     LaunchedEffect(isPlaying) {
