@@ -160,40 +160,43 @@ fun Modifier.staticGlassSurface(
         }
         val radius = size.minDimension / 2f
         val center = Offset(size.width / 2f, size.height / 2f)
-        // 玻璃底：上亮下暗的竖向渐变
-        drawRoundRect(
-            brush = Brush.verticalGradient(
-                listOf(
-                    Color.White.copy(alpha = tintAlpha + 0.08f * p),
-                    Color.White.copy(alpha = tintAlpha * 0.45f)
-                )
-            ),
-            cornerRadius = CornerRadius(corner)
-        )
-        // 顶部高光（玻璃反光边，随全局高光强度变化）
-        drawRoundRect(
-            brush = Brush.verticalGradient(
-                listOf(
-                    Color.White.copy(alpha = 0.55f * hs),
-                    Color.White.copy(alpha = 0.10f * hs),
-                    Color.Transparent
-                )
-            ),
-            cornerRadius = CornerRadius(corner),
-            style = Stroke(width = 1.25.dp.toPx())
-        )
-        // 底部内阴影（厚玻璃的暗边）
-        drawRoundRect(
-            brush = Brush.verticalGradient(
-                listOf(
-                    Color.Transparent,
-                    Color.Transparent,
-                    Color.Black.copy(alpha = 0.22f * hs)
-                )
-            ),
-            cornerRadius = CornerRadius(corner),
-            style = Stroke(width = 1.5.dp.toPx())
-        )
+        // tintAlpha=0（纯图标按钮）时不画玻璃底与高光边，只保留按压反馈
+        if (tintAlpha > 0.001f) {
+            // 玻璃底：上亮下暗的竖向渐变
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = tintAlpha + 0.08f * p),
+                        Color.White.copy(alpha = tintAlpha * 0.45f)
+                    )
+                ),
+                cornerRadius = CornerRadius(corner)
+            )
+            // 顶部高光（玻璃反光边，随全局高光强度变化）
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.55f * hs),
+                        Color.White.copy(alpha = 0.10f * hs),
+                        Color.Transparent
+                    )
+                ),
+                cornerRadius = CornerRadius(corner),
+                style = Stroke(width = 1.25.dp.toPx())
+            )
+            // 底部内阴影（厚玻璃的暗边）
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color.Transparent,
+                        Color.Transparent,
+                        Color.Black.copy(alpha = 0.22f * hs)
+                    )
+                ),
+                cornerRadius = CornerRadius(corner),
+                style = Stroke(width = 1.5.dp.toPx())
+            )
+        }
         // 按压：中心高光泛起
         if (p > 0.001f) {
             drawCircle(

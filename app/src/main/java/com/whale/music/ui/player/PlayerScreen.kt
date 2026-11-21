@@ -109,7 +109,6 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import androidx.compose.foundation.layout.wrapContentWidth
 import com.whale.music.R
-import com.whale.music.ui.components.liquidGlass
 import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.pager.HorizontalPager
@@ -325,7 +324,6 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.weight(1f))
                     PlayerTopActions(
-                        bgBackdrop = bgBackdrop,
                         onOpenLyricSettings = { showLyricSettings = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
@@ -473,7 +471,6 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     PlayerTopActions(
-                        bgBackdrop = bgBackdrop,
                         onOpenLyricSettings = { showLyricSettings = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
@@ -549,7 +546,6 @@ fun PlayerScreen(
 /** 顶栏右侧动作：歌词设置 + 更多菜单（竖屏顶栏 / 横屏右上浮层共用） */
 @Composable
 private fun PlayerTopActions(
-    bgBackdrop: Backdrop,
     onOpenLyricSettings: () -> Unit,
     moreMenu: Boolean,
     onMoreMenuChange: (Boolean) -> Unit,
@@ -561,7 +557,7 @@ private fun PlayerTopActions(
     PressableIconButton(
         onClick = onOpenLyricSettings,
         buttonSize = 44.dp,
-        backdrop = bgBackdrop, baseAlpha = 0f
+        baseAlpha = 0f
     ) {
         Icon(
             Icons.Default.Settings,
@@ -574,7 +570,7 @@ private fun PlayerTopActions(
         PressableIconButton(
             onClick = { onMoreMenuChange(true) },
             buttonSize = 44.dp,
-            backdrop = bgBackdrop, baseAlpha = 0f
+            baseAlpha = 0f
         ) {
             Icon(
                 Icons.Default.MoreVert,
@@ -927,7 +923,7 @@ internal fun PlaybackGlassControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 播放模式（顺序 / 单曲 / 随机）
-        GlassButton(backdrop, 40.dp, onToggleMode, animationScope) {
+        GlassButton(40.dp, onToggleMode, animationScope) {
             Icon(
                 imageVector = when (playMode) {
                     PlayMode.SEQUENCE -> Icons.Default.Repeat
@@ -941,7 +937,7 @@ internal fun PlaybackGlassControls(
                 modifier = Modifier.size(20.dp)
             )
         }
-        GlassButton(backdrop, 50.dp, onPrevious, animationScope) {
+        GlassButton(50.dp, onPrevious, animationScope) {
             Icon(
                 Icons.Default.SkipPrevious,
                 stringResource(R.string.action_previous),
@@ -949,14 +945,14 @@ internal fun PlaybackGlassControls(
                 modifier = Modifier.size(26.dp)
             )
         }
-        GlassButton(backdrop, 78.dp, onTogglePlay, animationScope) {
+        GlassButton(78.dp, onTogglePlay, animationScope) {
             Icon(
                 if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 stringResource(if (isPlaying) R.string.action_pause else R.string.action_play),
                 tint = TextPrimary, modifier = Modifier.size(38.dp)
             )
         }
-        GlassButton(backdrop, 50.dp, onNext, animationScope) {
+        GlassButton(50.dp, onNext, animationScope) {
             Icon(
                 Icons.Default.SkipNext,
                 stringResource(R.string.action_next),
@@ -965,7 +961,7 @@ internal fun PlaybackGlassControls(
             )
         }
         // 喜欢
-        GlassButton(backdrop, 40.dp, onToggleFavorite, animationScope) {
+        GlassButton(40.dp, onToggleFavorite, animationScope) {
             Icon(
                 if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = stringResource(
@@ -979,16 +975,13 @@ internal fun PlaybackGlassControls(
 }
 
 /**
- * 单个玻璃按钮 — 严格按库规范:
- * 1. drawBackdrop(backdrop, shape={CircleShape}, effects={vibrancy+blur+lens})
- * 2. highlight/shadow/innerShadow 随 pressProgress 变化
- * 3. layerBlock: scaleX/scaleY 按压缩放
- * 4. onDrawSurface: 半透明表面
- * 5. clickable + InteractiveHighlight.modifier + gestureModifier
+ * 单个播放控制按钮（平面样式 —— 按用户要求去掉玻璃效果，不再折射背景）:
+ * 1. drawBehind: 半透明白色圆底，按压时提亮
+ * 2. graphicsLayer: 按压缩放 + 轻微跟随按压点位移
+ * 3. clickable + InteractiveHighlight.modifier + gestureModifier
  */
 @Composable
 private fun GlassButton(
-    backdrop: Backdrop,
     btnSize: Dp,
     onClick: () -> Unit,
     animationScope: CoroutineScope,
@@ -1000,14 +993,10 @@ private fun GlassButton(
     Box(
         modifier = Modifier
             .size(btnSize)
-            .liquidGlass(
-                backdrop,
-                CircleShape,
-                press = p,
-                tintColor = Color.White,
-                tintAlpha = 0.15f,
-                withInnerShadow = true
-            ) {
+            .drawBehind {
+                drawCircle(Color.White.copy(alpha = 0.06f + 0.10f * p))
+            }
+            .graphicsLayer {
                 scaleX = 1f - 0.06f * p
                 scaleY = 1f - 0.06f * p
                 val off = highlight.offset

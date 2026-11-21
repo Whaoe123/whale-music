@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -63,6 +65,16 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -208,6 +220,24 @@ fun DiscoverScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(statusBarTop + 8.dp))
 
+            // ── 顶栏收起（学 AuraPlayer 大标题收拢）：列表上滑 96dp 完成收起 ──
+            //    文字缩一点并滑到顶栏正中，登录 / 搜索按钮淡出隐藏
+            val listState = rememberLazyListState()
+            val density = LocalDensity.current
+            val collapseThresholdPx = with(density) { 96.dp.toPx() }
+            val topBarCollapse by remember(collapseThresholdPx) {
+                derivedStateOf {
+                    val scrolled = if (listState.firstVisibleItemIndex > 0) collapseThresholdPx
+                    else listState.firstVisibleItemScrollOffset.toFloat()
+                    (scrolled / collapseThresholdPx).coerceIn(0f, 1f)
+                }
+            }
+            // 布尔单独派生：只在越过阈值时重组一次（浮点进度只在绘制阶段读）
+            val topBarCollapsed by remember { derivedStateOf { topBarCollapse >= 0.55f } }
+            var barBounds by remember { mutableStateOf<Rect?>(null) }
+            var titleBounds by remember { mutableStateOf<Rect?>(null) }
+            var columnBounds by remember { mutableStateOf<Rect?>(null) }
+
             if (uiState.openedPlaylist != null) {
                 // ── 歌单详情视图 ──
                 PlaylistDetailView(
@@ -229,10 +259,31 @@ fun DiscoverScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 20.dp)
+                        .onGloballyPositioned { barBounds = it.boundsInWindow() },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { columnBounds = it.boundsInWindow() }
+                            .graphicsLayer {
+                                val g = titleBounds ?: return@graphicsLayer
+                                val bar = barBounds ?: return@graphicsLayer
+                                val col = columnBounds ?: return@graphicsLayer
+                                // 以标题中心为缩放原点：缩小一点 + 水平滑到顶栏正中
+                                transformOrigin = TransformOrigin(
+                                    ((g.center.x - col.left) / col.width.coerceAtLeast(1f))
+                                        .coerceIn(0f, 1f),
+                                    ((g.center.y - col.top) / col.height.coerceAtLeast(1f))
+                                        .coerceIn(0f, 1f)
+                                )
+                                val s = 1f - 0.14f * topBarCollapse
+                                scaleX = s
+                                scaleY = s
+                                translationX = topBarCollapse * (bar.center.x - g.center.x)
+                            }
+                    ) {
                         Text(
                             text = if (ncmLogin == NcmLoginState.LOGGED_IN &&
                                 !ncmProfile?.nickname.isNullOrBlank()
@@ -245,7 +296,8 @@ fun DiscoverScreen(
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.onGloballyPositioned { titleBounds = it.boundsInWindow() }
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -259,29 +311,41 @@ fun DiscoverScreen(
                         )
                     }
 
-                    PressableIconButton(
-                        onClick = {
-                            searchMode = !searchMode
-                            if (!searchMode) viewModel.clearSearch()
-                        },
-                        buttonSize = 44.dp,
-                        baseAlpha = 0.10f
+                    AnimatedVisibility(
+                        visible = !topBarCollapsed,
+                        enter = fadeIn(tween(160)),
+                        exit = fadeOut(tween(160))
                     ) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = "搜索",
-                            tint = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(20.dp)
-                        )
+                        PressableIconButton(
+                            onClick = {
+                                searchMode = !searchMode
+                                if (!searchMode) viewModel.clearSearch()
+                            },
+                            buttonSize = 44.dp,
+                            baseAlpha = 0.10f
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = "搜索",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     Spacer(Modifier.width(6.dp))
 
-                    NcmAccountChip(
-                        loggedIn = ncmLogin == NcmLoginState.LOGGED_IN,
-                        nickname = ncmProfile?.nickname.orEmpty(),
-                        onClick = { loginStage = 1 }
-                    )
+                    AnimatedVisibility(
+                        visible = !topBarCollapsed,
+                        enter = fadeIn(tween(160)),
+                        exit = fadeOut(tween(160))
+                    ) {
+                        NcmAccountChip(
+                            loggedIn = ncmLogin == NcmLoginState.LOGGED_IN,
+                            nickname = ncmProfile?.nickname.orEmpty(),
+                            onClick = { loginStage = 1 }
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -459,6 +523,7 @@ fun DiscoverScreen(
                     }
 
                     else -> LazyColumn(
+                        state = listState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),

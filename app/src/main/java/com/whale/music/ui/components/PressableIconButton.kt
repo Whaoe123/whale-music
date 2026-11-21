@@ -68,7 +68,7 @@ fun PressableIconButton(
         // 顶部高光/底部暗边跟设置页「液态玻璃 → 高光/反射」全局联动
         Modifier.staticGlassSurface(
             shape = CircleShape,
-            tintAlpha = baseAlpha.coerceAtLeast(0.10f),
+            tintAlpha = baseAlpha,
             press = p
         )
     }
