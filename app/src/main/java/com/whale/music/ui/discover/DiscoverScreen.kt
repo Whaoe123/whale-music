@@ -632,6 +632,8 @@ fun DiscoverScreen(
                     )
                     // ── 顶栏浮层：浮在列表之上，上滑时文字归中、按钮隐藏 ──
                     Column(Modifier.fillMaxWidth()) {
+                        // 状态栏留白：浮层从状态栏下方开始，别压到时钟/电量上
+                        Spacer(Modifier.height(statusBarTop + 8.dp))
                 // ── 顶栏：尺寸与第二页完全一致（22sp 标题 / 11sp 副标题 / 44dp 图标按钮）──
                 Row(
                     modifier = Modifier
