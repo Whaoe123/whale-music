@@ -548,6 +548,7 @@ fun PlayerScreen(
                         val src = when (playing.albumId) {
                             com.whale.music.ui.player.PlayerViewModel.REMOTE_WY_ALBUM_ID -> "wy"
                             com.whale.music.ui.player.PlayerViewModel.REMOTE_LX_ALBUM_ID -> "lx"
+                            com.whale.music.ui.player.PlayerViewModel.REMOTE_BILI_ALBUM_ID -> "bili"
                             else -> "kw"
                         }
                         com.whale.music.data.model.RemoteSong(
@@ -711,6 +712,7 @@ private fun SongTextBlock(
             songNow == null -> null
             songNow.albumId == PlayerViewModel.REMOTE_WY_ALBUM_ID -> "网易云"
             songNow.albumId == PlayerViewModel.REMOTE_LX_ALBUM_ID -> "自定义"
+            songNow.albumId == PlayerViewModel.REMOTE_BILI_ALBUM_ID -> "B站"
             songNow.albumId < 0L -> "酷我"
             else -> "本地"
         }

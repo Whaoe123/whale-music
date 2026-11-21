@@ -107,15 +107,16 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** 网络歌（酷我 / 网易 / lx）在本地 Song 里的 albumId 标记 */
+    /** 网络歌（酷我 / 网易 / lx / B站）在本地 Song 里的 albumId 标记 */
     private fun isRemoteSong(song: Song): Boolean =
         song.albumId == REMOTE_ALBUM_ID || song.albumId == REMOTE_WY_ALBUM_ID ||
-            song.albumId == REMOTE_LX_ALBUM_ID
+            song.albumId == REMOTE_LX_ALBUM_ID || song.albumId == REMOTE_BILI_ALBUM_ID
 
-    /** 播放中的网络歌 → 在线收藏表主键（按来源建 kw_/wy_/lx_ 前缀） */
+    /** 播放中的网络歌 → 在线收藏表主键（按来源建 kw_/wy_/lx_/bili_ 前缀） */
     private fun remoteKeyId(song: Song): String = when (song.albumId) {
         REMOTE_WY_ALBUM_ID -> "wy_${song.id}"
         REMOTE_LX_ALBUM_ID -> "lx_${song.id}"
+        REMOTE_BILI_ALBUM_ID -> "bili_${song.id}"
         else -> "kw_${song.id}"
     }
 
@@ -168,6 +169,7 @@ class PlayerViewModel @Inject constructor(
                 val source = when (song.albumId) {
                     REMOTE_WY_ALBUM_ID -> "wy"
                     REMOTE_LX_ALBUM_ID -> "lx"
+                    REMOTE_BILI_ALBUM_ID -> "bili"
                     else -> "kw"
                 }
                 val songId = "${source}_${song.id}"
@@ -202,5 +204,8 @@ class PlayerViewModel @Inject constructor(
 
         /** RemoteMusicController.toLocalSong 给 lx 自定义音源网络歌的 albumId 标记 */
         const val REMOTE_LX_ALBUM_ID = -3L
+
+        /** RemoteMusicController.toLocalSong 给 B 站兜底网络歌的 albumId 标记 */
+        const val REMOTE_BILI_ALBUM_ID = -4L
     }
 }

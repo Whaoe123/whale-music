@@ -79,6 +79,7 @@ class SettingsViewModel @Inject constructor(
                 controller.clearResolvedUrls()
                 LyricSource.clearCache()
                 KwSource.clearCaches()
+                com.whale.music.data.remote.BiliSource.clearCaches()
                 lxManager.clearCaches()
             }
             // Toast 要在主线程弹

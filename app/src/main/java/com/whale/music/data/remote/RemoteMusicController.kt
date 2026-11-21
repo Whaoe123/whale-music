@@ -54,6 +54,10 @@ class RemoteMusicController @Inject constructor(
     private val kwMatchCache = ConcurrentHashMap<String, RemoteSong>()
     private val kwMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** 曲目 → B 站候选的匹配/未命中缓存（同 kw，避免批量播放反复打 B 站搜索） */
+    private val biliMatchCache = ConcurrentHashMap<String, RemoteSong>()
+    private val biliMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /**
      * 网易取流失败的短 TTL 负缓存：同一首 10 分钟内不再打网易接口，
      * 直接走酷我兜底。批量播放时 VIP/无版权曲会反复撞同一个 rid，
@@ -100,14 +104,18 @@ class RemoteMusicController @Inject constructor(
     private suspend fun resolveUrlUncached(song: RemoteSong): String? {
         // lx 自定义音源：地址只由脚本解析
         if (song.source == "lx") {
-            return lxManager.playUrl(song, lxQuality())
+            return lxManager.playUrl(song, lxQuality()) ?: biliFallback(toMatchTrack(song))
+        }
+        // B 站兜底曲目：直接取视频音频流
+        if (song.source == "bili") {
+            return BiliSource.playUrl(song.rid)
         }
         if (song.source == "kw") {
             KwSource.playUrl(song.rid)?.let { return it }
             // 这条 rid 失效了 → 按「歌名 + 歌手」在酷我重新核对一条活的
             matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
-            // 酷我也没有 → lx 脚本音源兜底
-            return lxFallback(toMatchTrack(song))
+            // 酷我也没有 → lx 脚本音源兜底 → 最后 B 站
+            return lxFallback(toMatchTrack(song)) ?: biliFallback(toMatchTrack(song))
         }
         // 10 分钟内刚拿过「网易不给链接」→ 直接走酷我兜底，不再白打一轮
         var cacheableMiss = false
@@ -127,14 +135,18 @@ class RemoteMusicController @Inject constructor(
         }
         if (wyUrl != null) return wyUrl
         if (cacheableMiss) wyUrlMiss.put("wy_${song.rid}", true, WY_MISS_TTL_MS)
-        // 没拿到链接 → 转酷我按「歌名 + 歌手」核对同一首；酷我也没有 → lx 兜底
+        // 没拿到链接 → 转酷我按「歌名 + 歌手」核对同一首；酷我也没有 → lx 兜底 → 最后 B 站
         matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
-        return lxFallback(toMatchTrack(song))
+        return lxFallback(toMatchTrack(song)) ?: biliFallback(toMatchTrack(song))
     }
 
     /** lx 兜底：酷我按名字找不到时，在启用的 lx 脚本里再核对一遍（同一套 SongMatcher 三重核对） */
     private suspend fun lxFallback(track: QsTrack): String? =
         lxManager.matchLx(track)?.let { lxManager.playUrl(it, lxQuality()) }
+
+    /** B 站兜底：前面所有音源都没戏时，按「歌名 + 歌手」搜 B 站视频取音频流（BiliMatcher 核对） */
+    private fun biliFallback(track: QsTrack): String? =
+        matchBili(track)?.let { BiliSource.playUrl(it.rid) }
 
     /** lx 脚本的音质档位（对齐网易音质选择；自动 = 320k） */
     private fun lxQuality(): String = when (session.qualityLevel()) {
@@ -215,10 +227,11 @@ class RemoteMusicController @Inject constructor(
         artist = s.artist,
         album = s.album,
         duration = s.duration,
-        // 网络歌标记：酷我 -1 / 网易 -2 / lx -3，播放器按此区分收藏写哪张表
+        // 网络歌标记：酷我 -1 / 网易 -2 / lx -3 / B站 -4，播放器按此区分收藏写哪张表
         albumId = when (s.source) {
             "wy" -> ALBUM_ID_WY
             "lx" -> ALBUM_ID_LX
+            "bili" -> ALBUM_ID_BILI
             else -> ALBUM_ID_KW
         },
         uri = url
@@ -369,8 +382,24 @@ class RemoteMusicController @Inject constructor(
                 )
             }
         }
-        // 酷我优先；酷我按名字找不到 → lx 脚本音源兜底
-        return matchKw(track) ?: lxManager.matchLx(track)
+        // B 站收藏行：key 形如 bili_<aid>，直接按 B 站源回放（aid 反查 cid 走 playUrl）
+        track.id.removePrefix("remote_").takeIf { it.startsWith("bili_") }?.let { k ->
+            val rid = k.removePrefix("bili_").toLongOrNull()
+            if (rid != null && rid > 0) {
+                return RemoteSong(
+                    songId = k,
+                    source = "bili",
+                    rid = rid,
+                    title = track.title,
+                    artist = track.artist,
+                    album = track.album,
+                    coverUrl = track.cover,
+                    duration = track.duration
+                )
+            }
+        }
+        // 酷我优先；酷我按名字找不到 → lx 脚本音源兜底 → 最后 B 站
+        return matchKw(track) ?: lxManager.matchLx(track) ?: matchBili(track)
     }
 
     /**
@@ -455,6 +484,46 @@ class RemoteMusicController @Inject constructor(
         return result
     }
 
+    /**
+     * 曲目 → B 站视频（最后一级兜底）。
+     *
+     * B 站没有曲库，只有视频，标题是长句，所以用 [BiliMatcher] 的放宽规则：
+     * 标题必须含歌名，再按歌手 / 版本词 / 时长打分。宁缺毋滥，
+     * 低于阈值照样跳过 —— 兜底不能兜成别的歌。
+     */
+    private fun matchBili(track: QsTrack): RemoteSong? {
+        if (biliMatchCache.size > 600) {
+            biliMatchCache.clear()
+            biliMissCache.clear()
+        }
+        biliMatchCache[track.id]?.let { return it }
+        if (track.id in biliMissCache) return null
+        if (SongMatcher.queries(track).isEmpty()) return null
+
+        var best: RemoteSong? = null
+        var bestScore = Int.MIN_VALUE
+        for (q in SongMatcher.queries(track)) {
+            val hits = try {
+                BiliSource.search(q)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            for (h in hits) {
+                val s = BiliMatcher.score(h, track)
+                if (s > bestScore) {
+                    bestScore = s
+                    best = h
+                }
+            }
+            // 已经够高了就不用再降级检索
+            if (bestScore >= BiliMatcher.EXACT_TITLE_SCORE) break
+        }
+
+        val result = best?.takeIf { bestScore >= BiliMatcher.ACCEPT_MIN_SCORE }
+        if (result != null) biliMatchCache[track.id] = result else biliMissCache += track.id
+        return result
+    }
+
     companion object {
         /** 播放中歌曲的 albumId 标记：酷我来源 */
         const val ALBUM_ID_KW = -1L
@@ -464,6 +533,9 @@ class RemoteMusicController @Inject constructor(
 
         /** 播放中歌曲的 albumId 标记：lx 自定义音源（rid 是脚本条目的稳定哈希） */
         const val ALBUM_ID_LX = -3L
+
+        /** 播放中歌曲的 albumId 标记：B 站兜底（rid 是视频 aid） */
+        const val ALBUM_ID_BILI = -4L
 
         /** 网易取流负缓存 TTL：同一首 10 分钟内不再打网易 */
         private const val WY_MISS_TTL_MS = 10 * 60_000L
@@ -492,10 +564,18 @@ class RemoteMusicController @Inject constructor(
         } else null
         val url = direct?.url?.replaceFirst("http://", "https://")
             ?: (resolveUrl(song) ?: return@withContext "拿不到下载链接")
-        val ext = if ((direct?.type ?: "").contains("flac", ignoreCase = true) ||
-            url.contains("flac", ignoreCase = true)
-        ) "flac" else "mp3"
-        val mime = if (ext == "flac") "audio/flac" else "audio/mpeg"
+        val ext = when {
+            (direct?.type ?: "").contains("flac", ignoreCase = true) ||
+                url.contains("flac", ignoreCase = true) -> "flac"
+            // B 站音频流是 m4a（AAC），按 mp3 存会误导播放器
+            song.source == "bili" || url.contains("bilivideo") -> "m4a"
+            else -> "mp3"
+        }
+        val mime = when (ext) {
+            "flac" -> "audio/flac"
+            "m4a" -> "audio/mp4"
+            else -> "audio/mpeg"
+        }
         val safeTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         val safeArtist = song.artist.replace(Regex("[\\\\/:*?\"<>|]"), "_")
 
