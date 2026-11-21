@@ -45,6 +45,21 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteLx(id: String) = lxManager.delete(id)
 
+    // ───────── 播放音源顺序（多选，默认四个全开） ─────────
+
+    /** 已勾选的音源集合（顺序固定：网易云 → B站 → 酷我 → lx） */
+    val sourceEnabled = com.whale.music.data.remote.SourcePrefs.enabled
+
+    /**
+     * 勾选 / 取消一个音源。
+     * @return false = 拒绝（最后一个音源不能取消）
+     */
+    fun setSourceEnabled(id: String, enabled: Boolean): Boolean =
+        com.whale.music.data.remote.SourcePrefs.setEnabled(id, enabled).also { ok ->
+            // 音源集合变了：旧地址可能来自刚被关掉的源，全清重解
+            if (ok) controller.clearResolvedUrls()
+        }
+
     // ───────── Hi·Res 金标（DisplayPrefs：StateFlow，播放页实时生效） ─────────
 
     val hiresEnabled = com.whale.music.util.DisplayPrefs.hiresEnabled

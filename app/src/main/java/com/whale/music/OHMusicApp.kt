@@ -2,6 +2,7 @@ package com.whale.music
 
 import android.app.Application
 import com.whale.music.data.remote.LyricSource
+import com.whale.music.data.remote.SourcePrefs
 import com.whale.music.util.CoverResolver
 import com.whale.music.util.CrashGuard
 import com.whale.music.player.audio.FxPrefs
@@ -25,5 +26,7 @@ class OHMusicApp : Application() {
         LyricPrefs.init(this)
         // 音效（EQ 预设/增益）与频谱可视化开关：恢复后推到 EqBus 供音频线程读取
         FxPrefs.init(this)
+        // 播放音源选择与兜底顺序（网易云 → B站 → 酷我 → lx）
+        SourcePrefs.init(this)
     }
 }

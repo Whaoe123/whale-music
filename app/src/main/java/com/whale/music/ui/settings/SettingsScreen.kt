@@ -93,14 +93,17 @@ fun SettingsScreen(
     // 底部导航栏 / 播放页开关（默认开启）
     val navBarEnabled by viewModel.navBarEnabled.collectAsState()
     val playerPageEnabled by viewModel.playerPageEnabled.collectAsState()
-    // 分区折叠：默认展开「播放 / 界面」，其余点标题展开（页面更整洁）
-    var secPlay by rememberSaveable { mutableStateOf(true) }
-    var secUi by rememberSaveable { mutableStateOf(true) }
+    // 分区折叠：默认全部收起，点标题展开（页面更整洁）
+    var secPlay by rememberSaveable { mutableStateOf(false) }
+    var secUi by rememberSaveable { mutableStateOf(false) }
     var secBadge by rememberSaveable { mutableStateOf(false) }
     var secGlass by rememberSaveable { mutableStateOf(false) }
     var secUpdate by rememberSaveable { mutableStateOf(false) }
     var secCache by rememberSaveable { mutableStateOf(false) }
     var secAbout by rememberSaveable { mutableStateOf(false) }
+    // 播放音源多选（默认四个全开，顺序固定：网易云 → B站 → 酷我 → lx）
+    var secSource by rememberSaveable { mutableStateOf(false) }
+    val sourceEnabled by viewModel.sourceEnabled.collectAsState()
     // 液态玻璃（GlassPrefs：折射 / 厚度 / 色散 / 模糊 / 高光，全局玻璃控件实时生效）
     val glassRefraction by com.whale.music.util.GlassPrefs.refraction.collectAsState()
     val glassThickness by com.whale.music.util.GlassPrefs.thickness.collectAsState()
@@ -199,6 +202,71 @@ fun SettingsScreen(
                         uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
                     )
                 )
+            }
+        }
+
+        // ───────── 播放音源（多选，顺序固定：网易云 → B站 → 酷我 → lx） ─────────
+        SettingsCard(
+            title = "播放音源",
+            expanded = secSource,
+            onToggle = { secSource = !secSource }
+        ) {
+            Text(
+                "按从上到下的顺序逐个取流，上一个拿不到才轮到下一个。" +
+                    "只勾一个 = 只用它出声，方便逐个测试；至少要保留一个。",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                lineHeight = 17.sp
+            )
+            Spacer(Modifier.height(8.dp))
+            val sourceRows = listOf(
+                Triple("ncm", "网易云", "EAPI 直连，会员可拿无损"),
+                Triple("bili", "哔哩哔哩", "搜视频取音频流，最后防线"),
+                Triple("kw", "酷我", "曲库大，最高 320k"),
+                Triple("lx", "lx 脚本", "导入的洛雪自定义音源")
+            )
+            sourceRows.forEachIndexed { i, (id, name, hint) ->
+                if (i > 0) {
+                    Spacer(Modifier.height(6.dp))
+                    SettingsDivider()
+                    Spacer(Modifier.height(6.dp))
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // 优先级序号：显示的就是取流先后
+                    Text(
+                        "${i + 1}",
+                        color = Color(0xFF60A5FA),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(18.dp)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(name, color = Color.White, fontSize = 15.sp)
+                        Text(
+                            hint,
+                            color = Color.White.copy(alpha = 0.45f),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = id in sourceEnabled,
+                        onCheckedChange = { on ->
+                            if (!viewModel.setSourceEnabled(id, on)) {
+                                android.widget.Toast
+                                    .makeText(context, "至少保留一个音源", android.widget.Toast.LENGTH_SHORT)
+                                    .show()
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = Color(0xFF60A5FA),
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.18f),
+                            uncheckedThumbColor = Color.White.copy(alpha = 0.7f)
+                        )
+                    )
+                }
             }
         }
 

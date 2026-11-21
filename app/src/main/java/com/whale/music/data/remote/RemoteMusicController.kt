@@ -58,6 +58,10 @@ class RemoteMusicController @Inject constructor(
     private val biliMatchCache = ConcurrentHashMap<String, RemoteSong>()
     private val biliMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /** 曲目 → 网易候选的匹配/未命中缓存（音源顺序第一级，规则同 kw/bili） */
+    private val ncmMatchCache = ConcurrentHashMap<String, RemoteSong>()
+    private val ncmMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /**
      * 网易取流失败的短 TTL 负缓存：同一首 10 分钟内不再打网易接口，
      * 直接走酷我兜底。批量播放时 VIP/无版权曲会反复撞同一个 rid，
@@ -102,51 +106,70 @@ class RemoteMusicController @Inject constructor(
     }
 
     private suspend fun resolveUrlUncached(song: RemoteSong): String? {
-        // lx 自定义音源：地址只由脚本解析
-        if (song.source == "lx") {
-            return lxManager.playUrl(song, lxQuality()) ?: biliFallback(toMatchTrack(song))
-        }
-        // B 站兜底曲目：直接取视频音频流
-        if (song.source == "bili") {
-            return BiliSource.playUrl(song.rid)
-        }
-        if (song.source == "kw") {
-            KwSource.playUrl(song.rid)?.let { return it }
-            // 这条 rid 失效了 → 按「歌名 + 歌手」在酷我重新核对一条活的
-            matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
-            // 酷我也没有 → lx 脚本音源兜底 → 最后 B 站
-            return lxFallback(toMatchTrack(song)) ?: biliFallback(toMatchTrack(song))
-        }
-        // 10 分钟内刚拿过「网易不给链接」→ 直接走酷我兜底，不再白打一轮
-        var cacheableMiss = false
-        val wyUrl = if (wyUrlMiss["wy_${song.rid}"] == null) {
-            try {
-                // 带上已知时长：EAPI 会用它识别「接口没标、实际只有 30 秒」的截断试听流
-                val u = NcmApi.playUrls(session, listOf(song.rid), mapOf(song.rid to song.duration))[song.rid]
-                    ?.takeIf { it.isNotBlank() }
-                // 拿到了语义上的「没链接」才可缓存；异常（超时/风控）不进负缓存
-                cacheableMiss = u == null
-                u
-            } catch (e: Exception) {
-                null
+        val order = SourcePrefs.order()
+        if (order.isEmpty()) return null // 设置保证至少留一个，这里是兜底
+        val track = toMatchTrack(song)
+        val ownId = sourceIdOf(song)
+        // 按设置的音源顺序逐个试：轮到自己的源就用已知 rid 直连，
+        // 其余源按「歌名 + 歌手」核对后取流（宁可跳过也不播成别的歌）
+        for (src in order) {
+            if (src == ownId) {
+                directUrl(song)?.let { return it }
+            } else {
+                urlViaName(src, track)?.let { return it }
             }
-        } else {
-            null
         }
-        if (wyUrl != null) return wyUrl
-        if (cacheableMiss) wyUrlMiss.put("wy_${song.rid}", true, WY_MISS_TTL_MS)
-        // 没拿到链接 → 转酷我按「歌名 + 歌手」核对同一首；酷我也没有 → lx 兜底 → 最后 B 站
-        matchKw(toMatchTrack(song))?.rid?.let { KwSource.playUrl(it) }?.let { return it }
-        return lxFallback(toMatchTrack(song)) ?: biliFallback(toMatchTrack(song))
+        return null
     }
 
-    /** lx 兜底：酷我按名字找不到时，在启用的 lx 脚本里再核对一遍（同一套 SongMatcher 三重核对） */
-    private suspend fun lxFallback(track: QsTrack): String? =
-        lxManager.matchLx(track)?.let { lxManager.playUrl(it, lxQuality()) }
+    /** RemoteSong.source → SourcePrefs 的音源 id（网易的 "wy" 对应设置里的 "ncm"） */
+    private fun sourceIdOf(song: RemoteSong): String =
+        if (song.source == "wy") "ncm" else song.source
 
-    /** B 站兜底：前面所有音源都没戏时，按「歌名 + 歌手」搜 B 站视频取音频流（BiliMatcher 核对） */
-    private fun biliFallback(track: QsTrack): String? =
-        matchBili(track)?.let { BiliSource.playUrl(it.rid) }
+    /** 自己的源：已知 rid 直连（最可靠），拿不到再按名字在本源重新核对一次 */
+    private suspend fun directUrl(song: RemoteSong): String? {
+        val track = toMatchTrack(song)
+        return when (song.source) {
+            "lx" -> lxManager.playUrl(song, lxQuality())
+            "bili" -> BiliSource.playUrl(song.rid)
+            "kw" -> KwSource.playUrl(song.rid)
+                // 这条 rid 失效了 → 按「歌名 + 歌手」在酷我重新核对一条活的
+                ?: matchKw(track)?.rid?.let { KwSource.playUrl(it) }
+            else -> ncmUrlOf(song) // "wy" 及未识别来源都走网易
+        }
+    }
+
+    /** 指定音源：按「歌名 + 歌手」核对出曲目再取流（跨源兜底用） */
+    private suspend fun urlViaName(src: String, track: QsTrack): String? = when (src) {
+        "ncm" -> matchNcm(track)?.let { ncmUrlOf(it) }
+        "bili" -> matchBili(track)?.let { BiliSource.playUrl(it.rid) }
+        "kw" -> matchKw(track)?.rid?.let { KwSource.playUrl(it) }
+        "lx" -> lxManager.matchLx(track)?.let { lxManager.playUrl(it, lxQuality()) }
+        else -> null
+    }
+
+    /**
+     * 网易取流（带 10 分钟负缓存）：
+     * 拿过一次「网易不给链接」的 rid 在 TTL 内直接返回 null，
+     * 批量播放时 VIP / 无版权曲不会每批都白打一轮网易接口。
+     */
+    private suspend fun ncmUrlOf(song: RemoteSong): String? {
+        if (wyUrlMiss["wy_${song.rid}"] != null) return null
+        var cacheableMiss = false
+        val u = try {
+            // 带上已知时长：EAPI 会用它识别「接口没标、实际只有 30 秒」的截断试听流
+            val got = NcmApi.playUrls(session, listOf(song.rid), mapOf(song.rid to song.duration))[song.rid]
+                ?.takeIf { it.isNotBlank() }
+            // 拿到了语义上的「没链接」才可缓存；异常（超时/风控）不进负缓存
+            cacheableMiss = got == null
+            got
+        } catch (e: Exception) {
+            null
+        }
+        if (u != null) return u
+        if (cacheableMiss) wyUrlMiss.put("wy_${song.rid}", true, WY_MISS_TTL_MS)
+        return null
+    }
 
     /** lx 脚本的音质档位（对齐网易音质选择；自动 = 320k） */
     private fun lxQuality(): String = when (session.qualityLevel()) {
@@ -398,8 +421,18 @@ class RemoteMusicController @Inject constructor(
                 )
             }
         }
-        // 酷我优先；酷我按名字找不到 → lx 脚本音源兜底 → 最后 B 站
-        return matchKw(track) ?: lxManager.matchLx(track) ?: matchBili(track)
+        // 按设置的音源顺序核对（带平台 id 的上面已直接回放）
+        for (src in SourcePrefs.order()) {
+            val hit = when (src) {
+                "ncm" -> matchNcm(track)
+                "kw" -> matchKw(track)
+                "lx" -> lxManager.matchLx(track)
+                "bili" -> matchBili(track)
+                else -> null
+            }
+            if (hit != null) return hit
+        }
+        return null
     }
 
     /**
@@ -483,6 +516,56 @@ class RemoteMusicController @Inject constructor(
         if (result != null) kwMatchCache[track.id] = result else kwMissCache += track.id
         return result
     }
+
+    /**
+     * 曲目 → 网易云曲目（音源顺序里的第一级，按名字核对）。
+     *
+     * 与 [matchKw] 同一套 [SongMatcher] 打分淘汰规则，只是检索打在网易搜索上；
+     * 结果转成 source="wy" 的 RemoteSong，取流交给 [ncmUrlOf]。
+     */
+    private suspend fun matchNcm(track: QsTrack): RemoteSong? {
+        if (ncmMatchCache.size > 600) {
+            ncmMatchCache.clear()
+            ncmMissCache.clear()
+        }
+        ncmMatchCache[track.id]?.let { return it }
+        if (track.id in ncmMissCache) return null
+        if (SongMatcher.queries(track).isEmpty()) return null
+
+        var best: RemoteSong? = null
+        var bestScore = Int.MIN_VALUE
+        for (q in SongMatcher.queries(track)) {
+            val hits = try {
+                NcmApi.search(session, q, limit = 8).map { it.toRemoteSong() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            for (h in hits) {
+                val s = SongMatcher.score(h, track)
+                if (s > bestScore) {
+                    bestScore = s
+                    best = h
+                }
+            }
+            if (bestScore >= SongMatcher.EXACT_TITLE_SCORE) break
+        }
+
+        val result = best?.takeIf { bestScore >= SongMatcher.ACCEPT_MIN_SCORE }
+        if (result != null) ncmMatchCache[track.id] = result else ncmMissCache += track.id
+        return result
+    }
+
+    /** 网易搜索结果 → 在线曲目（songId/rid 都是网易 id，取流走 [ncmUrlOf]） */
+    private fun com.whale.music.ncm.NcmSongDto.toRemoteSong() = RemoteSong(
+        songId = "wy_$id",
+        source = "wy",
+        rid = id,
+        title = title,
+        artist = artist,
+        album = album,
+        coverUrl = CoverUrl.hd(coverUrl.orEmpty()),
+        duration = durationMs
+    )
 
     /**
      * 曲目 → B 站视频（最后一级兜底）。
