@@ -84,6 +84,7 @@ import com.whale.music.data.model.RemoteSong
 import com.whale.music.data.sync.SongKey
 import com.whale.music.ui.components.PressableIconButton
 import com.whale.music.ui.components.pressScale
+import com.whale.music.ui.components.staticGlassSurface
 
 /** 底部导航 + 迷你条占位高度（与第二页一致）；导航关掉（设置页「界面」）时只给迷你条留 */
 @Composable
@@ -281,21 +282,6 @@ fun DiscoverScreen(
                         nickname = ncmProfile?.nickname.orEmpty(),
                         onClick = { loginStage = 1 }
                     )
-
-                    Spacer(Modifier.width(6.dp))
-
-                    PressableIconButton(
-                        onClick = { viewModel.loadHome(force = true) },
-                        buttonSize = 44.dp,
-                        baseAlpha = 0.10f
-                    ) {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "刷新推荐",
-                            tint = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -618,7 +604,7 @@ fun DiscoverScreen(
                                     )
                                     Spacer(Modifier.height(10.dp))
                                     Text(
-                                        text = "点右上角刷新重试",
+                                        text = "网络异常，重启应用会重新拉取",
                                         fontSize = 12.sp,
                                         color = Color.White.copy(alpha = 0.28f)
                                     )
@@ -1653,8 +1639,9 @@ private fun NcmAccountChip(
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(
-                if (loggedIn) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.08f)
+            .staticGlassSurface(
+                shape = RoundedCornerShape(50),
+                tintAlpha = if (loggedIn) 0.14f else 0.10f
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

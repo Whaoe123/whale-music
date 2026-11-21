@@ -325,6 +325,7 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.weight(1f))
                     PlayerTopActions(
+                        bgBackdrop = bgBackdrop,
                         onOpenLyricSettings = { showLyricSettings = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
@@ -472,6 +473,7 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     PlayerTopActions(
+                        bgBackdrop = bgBackdrop,
                         onOpenLyricSettings = { showLyricSettings = true },
                         moreMenu = moreMenu,
                         onMoreMenuChange = { moreMenu = it },
@@ -547,6 +549,7 @@ fun PlayerScreen(
 /** 顶栏右侧动作：歌词设置 + 更多菜单（竖屏顶栏 / 横屏右上浮层共用） */
 @Composable
 private fun PlayerTopActions(
+    bgBackdrop: Backdrop,
     onOpenLyricSettings: () -> Unit,
     moreMenu: Boolean,
     onMoreMenuChange: (Boolean) -> Unit,
@@ -558,7 +561,7 @@ private fun PlayerTopActions(
     PressableIconButton(
         onClick = onOpenLyricSettings,
         buttonSize = 44.dp,
-        baseAlpha = 0f
+        backdrop = bgBackdrop, baseAlpha = 0f
     ) {
         Icon(
             Icons.Default.Settings,
@@ -571,7 +574,7 @@ private fun PlayerTopActions(
         PressableIconButton(
             onClick = { onMoreMenuChange(true) },
             buttonSize = 44.dp,
-            baseAlpha = 0f
+            backdrop = bgBackdrop, baseAlpha = 0f
         ) {
             Icon(
                 Icons.Default.MoreVert,

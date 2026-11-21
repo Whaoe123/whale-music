@@ -35,7 +35,8 @@ import com.kyant.backdrop.shadow.Shadow
  * 统一的圆形图标按钮：按下时整体缩小 + 白色高光扩散 + 边缘亮起，松手弹回。
  *
  * - 传 [backdrop] 走液态玻璃（drawBackdrop）外观，适合叠在内容之上的控件；
- * - 不传则用半透明白色圆底，适合在 layerBackdrop 采样层内部使用（避免自采样循环）。
+ * - 不传则用静态玻璃近似（位于 layerBackdrop 采样层内部时避免自采样循环），
+ *   高光强度跟设置页「液态玻璃」全局联动。
  *
  * 点击区域等于 [buttonSize]，默认 48dp，满足最小触控尺寸。
  */
@@ -63,37 +64,13 @@ fun PressableIconButton(
             withInnerShadow = true
         )
     } else {
-        Modifier.drawBehind {
-            val radius = size.minDimension / 2f
-            val center = Offset(size.width / 2f, size.height / 2f)
-            if (p > 0.001f) {
-                // 高光从中心向外扩散
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.32f * p),
-                            Color.White.copy(alpha = 0.05f * p)
-                        ),
-                        center = center,
-                        radius = radius
-                    ),
-                    radius = radius,
-                    center = center
-                )
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.38f * p),
-                    radius = radius - 1f,
-                    center = center,
-                    style = Stroke(width = 1.5f)
-                )
-            } else {
-                drawCircle(
-                    color = Color.White.copy(alpha = baseAlpha),
-                    radius = radius,
-                    center = center
-                )
-            }
-        }
+        // 位于 layerBackdrop 采样层内部（自采样会形成循环）：静态玻璃近似，
+        // 顶部高光/底部暗边跟设置页「液态玻璃 → 高光/反射」全局联动
+        Modifier.staticGlassSurface(
+            shape = CircleShape,
+            tintAlpha = baseAlpha.coerceAtLeast(0.10f),
+            press = p
+        )
     }
 
     Box(

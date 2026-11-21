@@ -380,7 +380,7 @@ private fun ExpandedBar(
                     PressableIconButton(
                         onClick = onPrevious,
                         buttonSize = if (landscape) 30.dp else 38.dp,
-                        baseAlpha = 0.04f
+                        backdrop = backdrop, baseAlpha = 0.04f
                     ) {
                         Icon(
                             Icons.Default.SkipPrevious,
@@ -392,7 +392,7 @@ private fun ExpandedBar(
                     PressableIconButton(
                         onClick = onTogglePlay,
                         buttonSize = if (landscape) 30.dp else 38.dp,
-                        baseAlpha = 0.04f
+                        backdrop = backdrop, baseAlpha = 0.04f
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause
@@ -405,7 +405,7 @@ private fun ExpandedBar(
                     PressableIconButton(
                         onClick = onNext,
                         buttonSize = if (landscape) 30.dp else 38.dp,
-                        baseAlpha = 0.04f
+                        backdrop = backdrop, baseAlpha = 0.04f
                     ) {
                         Icon(
                             Icons.Default.SkipNext,

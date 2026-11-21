@@ -5,8 +5,14 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -128,4 +134,80 @@ fun Modifier.liquidGlass(
             drawRect(tintColor.copy(alpha = tintAlpha * (0.85f + 0.35f * boost)))
         }
     )
+}
+
+/**
+ * 静态玻璃近似 —— 给位于 layerBackdrop 采样层内部、不能安全采样 backdrop 的按钮用
+ * （自采样会形成循环，见 PressableIconButton 注释）。
+ *
+ * 玻璃底（上亮下暗渐变）+ 顶部高光 + 底部内阴影；
+ * 高光强度跟设置页「液态玻璃 → 高光/反射」全局联动，按压时中心泛起高光。
+ * 圆形和胶囊（圆角矩形）都适用：圆角按 shape 自动换算。
+ */
+@Composable
+fun Modifier.staticGlassSurface(
+    shape: Shape,
+    tintAlpha: Float = 0.14f,
+    press: Float = 0f
+): Modifier {
+    val highlightScale by GlassPrefs.highlight.collectAsState()
+    val hs = (highlightScale / 100f).coerceIn(0f, 2f)
+    val p = press.coerceIn(0f, 1f)
+    return this.drawBehind {
+        val corner = when (val outline = shape.createOutline(size, layoutDirection, this)) {
+            is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+            else -> 0f
+        }
+        val radius = size.minDimension / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+        // 玻璃底：上亮下暗的竖向渐变
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                listOf(
+                    Color.White.copy(alpha = tintAlpha + 0.08f * p),
+                    Color.White.copy(alpha = tintAlpha * 0.45f)
+                )
+            ),
+            cornerRadius = CornerRadius(corner)
+        )
+        // 顶部高光（玻璃反光边，随全局高光强度变化）
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                listOf(
+                    Color.White.copy(alpha = 0.55f * hs),
+                    Color.White.copy(alpha = 0.10f * hs),
+                    Color.Transparent
+                )
+            ),
+            cornerRadius = CornerRadius(corner),
+            style = Stroke(width = 1.25.dp.toPx())
+        )
+        // 底部内阴影（厚玻璃的暗边）
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                listOf(
+                    Color.Transparent,
+                    Color.Transparent,
+                    Color.Black.copy(alpha = 0.22f * hs)
+                )
+            ),
+            cornerRadius = CornerRadius(corner),
+            style = Stroke(width = 1.5.dp.toPx())
+        )
+        // 按压：中心高光泛起
+        if (p > 0.001f) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.30f * p),
+                        Color.White.copy(alpha = 0.04f * p)
+                    ),
+                    center = center,
+                    radius = radius
+                ),
+                radius = radius,
+                center = center
+            )
+        }
+    }
 }

@@ -373,7 +373,8 @@ class NcmViewModel @Inject constructor(
 
     /**
      * 原生播放：批量解析播放链接 → Media3 播放。
-     * 拿不到链接的歌不进队列，点它时给出明确提示（列表本身不隐藏任何歌）。
+     * 没链接的歌以占位（空 uri）进队列，数量/顺序与歌单一致，播到时自动跳过；
+     * 单独点它时仍给出明确提示。
      */
     fun play(song: Song, list: List<Song>) {
         if (_resolving.value) return
@@ -384,19 +385,20 @@ class NcmViewModel @Inject constructor(
                     // 带上时长：EAPI 用它识别「没标 freeTrialInfo 却只有 30 秒」的截断试听流
                     NcmApi.playUrls(session, list.map { it.id }, list.associate { it.id to it.duration })
                 }
-                val playable = list.mapNotNull { s ->
-                    urls[s.id]?.let { s.copy(uri = it) }
-                }
-                if (playable.none { it.id == song.id }) {
+                if (urls[song.id] == null) {
                     _error.value = "这首歌接口没有发链接，跳过播放"
                     return@launch
+                }
+                // 整单入队：有链接的带 uri，没链接的占位（空 uri），队列与歌单完全一致
+                val withUrls = list.map { s ->
+                    urls[s.id]?.let { s.copy(uri = it) } ?: s.copy(uri = "")
                 }
                 val covers = list.filter { it.id in urls.keys && coverMap.containsKey(it.id) }
                     .associate { it.id.toString() to (coverMap[it.id] ?: "") }
                     .filterValues { it.isNotEmpty() }
-                val index = playable.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+                val index = list.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
                 withContext(Dispatchers.Main) {
-                    playerManager.setPlaylist(playable, index, covers)
+                    playerManager.setPlaylist(withUrls, index, covers)
                 }
             } catch (e: Exception) {
                 _error.value = "获取播放链接失败：${e.message}"

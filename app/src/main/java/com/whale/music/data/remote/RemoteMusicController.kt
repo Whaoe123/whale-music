@@ -165,27 +165,44 @@ class RemoteMusicController @Inject constructor(
         memory.clearStartupSnapshot()
         // ① 先只解析被点的那一首 → 立刻出声，不等整个列表
         val startUrl = resolveUrl(start) ?: return "这首拿不到播放链接，换一首试试"
-        playerManager.setPlaylist(listOf(toLocalSong(start, startUrl)), 0, coversOf(start))
+        // ② 整单立刻入队：没解析的先占位（空 uri），队列数量/顺序与歌单完全一致，
+        //    播到占位曲时播放器自动跳过（见 MusicPlayerManager.skipUnresolved）
+        val rest = list.filter { it.songId != start.songId }
+        val bounded = rest.take(maxResolve - 1)
+        val beyond = rest.drop(maxResolve - 1)
+        playerManager.setPlaylist(
+            listOf(toLocalSong(start, startUrl)) +
+                bounded.map { toLocalSong(it, "") } +
+                beyond.map { toLocalSong(it, "") },
+            0,
+            coversOf(start)
+        )
 
-        // ② 其余歌曲后台并发解析（每批 6 首），完成后追加到队列，不打断当前播放
-        val rest = list.filter { it.songId != start.songId }.take(maxResolve - 1)
-        if (rest.isNotEmpty()) {
+        // ③ 其余歌曲后台并发解析（每批 6 首），完成后原地把占位换成可播放版本，不打断当前播放
+        if (bounded.isNotEmpty()) {
             scope.launch {
-                rest.chunked(6).forEach { chunk ->
-                    val playable = mutableListOf<Song>()
+                // 占位按顺序铺在 [start] 之后：首曲占 0 号位，其余从 1 开始顺排
+                var queueOffset = 1
+                bounded.chunked(6).forEach { chunk ->
                     val covers = mutableMapOf<String, String>()
                     val results = chunk.map { song -> async { song to resolveUrl(song) } }.awaitAll()
-                    for ((song, url) in results) {
-                        if (url == null) continue
-                        playable += toLocalSong(song, url)
-                        if (song.coverUrl.isNotBlank()) covers[song.rid.toString()] = CoverUrl.hd(song.coverUrl)
-                    }
-                    if (playable.isNotEmpty()) {
-                        // MediaController 操作回到主线程
-                        withContext(Dispatchers.Main) {
-                            playerManager.appendToQueue(playable, covers)
+                    val replacements = mutableListOf<Pair<Int, Song>>()
+                    results.forEachIndexed { i, (song, url) ->
+                        if (url == null) return@forEachIndexed
+                        replacements += (queueOffset + i) to toLocalSong(song, url)
+                        if (song.coverUrl.isNotBlank()) {
+                            covers[song.rid.toString()] = CoverUrl.hd(song.coverUrl)
                         }
                     }
+                    if (replacements.isNotEmpty()) {
+                        // MediaController 操作回到主线程
+                        withContext(Dispatchers.Main) {
+                            replacements.forEach { (index, song) ->
+                                playerManager.replaceQueueItem(index, song, covers)
+                            }
+                        }
+                    }
+                    queueOffset += chunk.size
                 }
             }
         }
@@ -252,37 +269,62 @@ class RemoteMusicController @Inject constructor(
             return if (sawUrlFail) "这首歌暂时拿不到播放链接" else "这个歌单里的歌暂时都没匹配到"
         }
 
+        // 整单立刻入队：没匹配的先占位（空 uri），队列数量/顺序与歌单完全一致，
+        // 播到占位曲时播放器自动跳过（见 MusicPlayerManager.skipUnresolved）
+        val others = tracks.filterIndexed { i, _ -> i != idx }
+        val bounded = others.take(maxResolve - 1)
+        val beyond = others.drop(maxResolve - 1)
         playerManager.setPlaylist(
-            listOf(toLocalSong(first, startUrl)),
+            listOf(toLocalSong(first, startUrl)) +
+                bounded.map { placeholderOf(it) } +
+                beyond.map { placeholderOf(it) },
             0,
             coversOf(first, tracks[idx]),
             startPositionMs
         )
 
-        val others = tracks.filterIndexed { i, _ -> i != idx }.take(maxResolve - 1)
-        if (others.isNotEmpty()) {
+        if (bounded.isNotEmpty()) {
             scope.launch {
-                // 边匹配边追加：每批 6 首完成立刻进队列，用户听得到后续曲目在长出来
-                others.chunked(6).forEach { chunk ->
-                    val playable = mutableListOf<Song>()
+                // 边匹配边原地替换占位：每批 6 首完成立刻变成可播放，队列顺序始终与歌单一致
+                var queueOffset = 1 // 首曲占 0 号位，其余占位从 1 开始顺排
+                bounded.chunked(6).forEach { chunk ->
                     val covers = mutableMapOf<String, String>()
                     val results = chunk.map { t -> async { t to resolveTrack(t) } }.awaitAll()
-                    for ((t, kw) in results) {
-                        if (kw == null) continue
-                        val url = resolveUrl(kw) ?: continue
-                        playable += toLocalSong(kw, url)
+                    val replacements = mutableListOf<Pair<Int, Song>>()
+                    results.forEachIndexed { i, (t, kw) ->
+                        if (kw == null) return@forEachIndexed
+                        val url = resolveUrl(kw) ?: return@forEachIndexed
+                        replacements += (queueOffset + i) to toLocalSong(kw, url)
                         covers.putAll(coversOf(kw, t))
                     }
-                    if (playable.isNotEmpty()) {
+                    if (replacements.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
-                            playerManager.appendToQueue(playable, covers)
+                            replacements.forEach { (index, song) ->
+                                playerManager.replaceQueueItem(index, song, covers)
+                            }
                         }
                     }
+                    queueOffset += chunk.size
                 }
             }
         }
         return null
     }
+
+    /**
+     * 未匹配曲目的占位（空 uri）：先占住队列位置，播到时自动跳过。
+     * id 用字符串哈希取负 —— 汽水 trackId 是 19 位字符串放不进 Long，
+     * 负数保证不与任何真实歌曲 id 撞车；匹配成功后按队列下标原地替换。
+     */
+    private fun placeholderOf(t: QsTrack) = Song(
+        id = -(kotlin.math.abs(t.id.hashCode().toLong()) + 1L),
+        title = t.title,
+        artist = t.artist,
+        album = t.album,
+        duration = t.duration,
+        albumId = ALBUM_ID_KW,
+        uri = ""
+    )
 
     /** 封面优先用汽水那张（跟列表一致），汽水没图才回落酷我专辑图 */
     private fun coversOf(kw: RemoteSong, qs: QsTrack): Map<String, String> {

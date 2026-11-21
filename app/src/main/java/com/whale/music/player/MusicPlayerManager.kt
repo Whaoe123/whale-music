@@ -11,6 +11,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -63,6 +64,73 @@ class MusicPlayerManager @Inject constructor(
     private var songsById: Map<String, Song> = emptyMap()
     private val coverUrls = mutableMapOf<String, String>()
 
+    /** 播放过但拿不到声音的曲目（链接失效等），同一次队列里不再回头试 */
+    private val failedMediaIds = mutableSetOf<String>()
+
+    /**
+     * 占位曲目（在线歌尚未解析出链接，uri 为空）或解析后又失效的曲目播不了：
+     * 从当前下标往后找第一首能播的；整队都播不了就停住，别在错误里打转。
+     *
+     * 有了它，播放队列可以和歌单保持完全一致 —— 播到播不了的自动让路。
+     */
+    private fun skipUnresolved(mediaController: MediaController) {
+        if (!mediaController.isConnected || mediaController.mediaItemCount == 0) return
+        var index = mediaController.currentMediaItemIndex.coerceAtLeast(0)
+        var guard = 0
+        while (index < mediaController.mediaItemCount && guard++ < mediaController.mediaItemCount) {
+            val id = mediaController.getMediaItemAt(index).mediaId
+            val song = songsById[id]
+            val playable = song != null && song.uri.isNotBlank() && id !in failedMediaIds
+            if (playable) break
+            index++
+        }
+        if (index >= mediaController.mediaItemCount) {
+            mediaController.pause()
+            return
+        }
+        if (index != mediaController.currentMediaItemIndex) {
+            mediaController.seekTo(index, 0L)
+        }
+    }
+
+    /**
+     * 渐进解析完成后，把队列里的占位曲目（空 uri）原地换成可播放版本。
+     * 按下标定位：汽水→酷我匹配后 song.id 会变，按 id 对不上。
+     */
+    fun replaceQueueItem(
+        index: Int,
+        song: Song,
+        covers: Map<String, String> = emptyMap(),
+        retriesLeft: Int = 6
+    ) {
+        if (song.uri.isBlank() || index !in playlist.indices) return
+        val current = playlist[index]
+        when {
+            current.uri.isBlank() -> {
+                // 占位 → 原地换成可播放版本（本地状态先更新，控制器随后同步）
+                playlist = playlist.toMutableList().also { it[index] = song }
+                songsById = songsById - current.id.toString() + (song.id.toString() to song)
+                coverUrls.putAll(covers)
+                failedMediaIds.remove(song.id.toString())
+            }
+            current != song -> return // 已是别的可播放曲目，不覆盖
+            // current == song：重试路径，本地已更新，只补控制器同步
+        }
+        withController { mediaController ->
+            if (index >= mediaController.mediaItemCount) {
+                // 大列表（>150 首）的 MediaItem 还在后台铺设：稍后重试同步控制器
+                if (retriesLeft > 0) {
+                    scope.launch {
+                        delay(200)
+                        replaceQueueItem(index, song, covers, retriesLeft - 1)
+                    }
+                }
+                return@withController
+            }
+            mediaController.replaceMediaItem(index, toMediaItem(song))
+        }
+    }
+
     /** 收藏网络歌时取封面用（mediaId = 平台原始 id） */
     fun coverUrlFor(mediaId: String): String? = coverUrls[mediaId]
     private var lastPersistedPosition = 0L
@@ -105,6 +173,16 @@ class MusicPlayerManager @Inject constructor(
                 0L
             }
             persistCurrentMedia(mediaItem.mediaId, position)
+            // 占位曲目（在线歌还没解析出链接）播不了：自动让路到下一首能播的
+            skipUnresolved(mediaController)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            // 链接失效 / 拿不到声音：记下来，本次队列里不再回头
+            val mediaController = controller ?: return
+            if (!mediaController.isConnected) return
+            mediaController.currentMediaItem?.mediaId?.let { failedMediaIds += it }
+            skipUnresolved(mediaController)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -163,6 +241,7 @@ class MusicPlayerManager @Inject constructor(
         playlist = songs
         queueCount = songs.size
         songsById = songs.associateBy { it.id.toString() }
+        failedMediaIds.clear()
         coverUrls.putAll(extraCovers)
         val safeIndex = startIndex.coerceIn(songs.indices)
         val snapshot = songs.toList()
@@ -417,6 +496,7 @@ class MusicPlayerManager @Inject constructor(
         playlist = restoredSongs
         queueCount = restoredSongs.size
         songsById = restoredSongs.associateBy { it.id.toString() }
+        failedMediaIds.clear()
         val currentId = prefs.getString(KEY_CURRENT_MEDIA_ID, null)
         val currentIndex = restoredSongs.indexOfFirst { it.id.toString() == currentId }
             .coerceAtLeast(0)
