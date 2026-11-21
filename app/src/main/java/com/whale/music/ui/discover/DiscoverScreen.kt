@@ -68,7 +68,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
@@ -187,6 +186,24 @@ fun DiscoverScreen(
         favorites.map { it.songId }.toSet() + likedKeys
     }
 
+    // ── 顶栏收起（学 AuraPlayer 大标题收拢）：列表上滑 96dp 完成收起 ──
+    //    文字逐行缩小 14% 并归中到顶栏正中，登录 / 搜索按钮淡出隐藏
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val collapseThresholdPx = with(density) { 96.dp.toPx() }
+    val topBarCollapse by remember(collapseThresholdPx) {
+        derivedStateOf {
+            val scrolled = if (listState.firstVisibleItemIndex > 0) collapseThresholdPx
+            else listState.firstVisibleItemScrollOffset.toFloat()
+            (scrolled / collapseThresholdPx).coerceIn(0f, 1f)
+        }
+    }
+    // 布尔单独派生：只在越过阈值时重组一次（浮点进度只在绘制阶段读）
+    val topBarCollapsed by remember { derivedStateOf { topBarCollapse >= 0.55f } }
+    var barBounds by remember { mutableStateOf<Rect?>(null) }
+    var titleBounds by remember { mutableStateOf<Rect?>(null) }
+    var subtitleBounds by remember { mutableStateOf<Rect?>(null) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -217,26 +234,25 @@ fun DiscoverScreen(
         }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
 
+        // ── 顶部渐变半透明幕（由上往下：深 → 透）：顶栏收起时淡入，托住归中的文字 ──
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(statusBarTop + 76.dp)
+                .graphicsLayer { alpha = topBarCollapse }
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.62f),
+                            Color.Black.copy(alpha = 0.30f),
+                            Color.Black.copy(alpha = 0f)
+                        )
+                    )
+                )
+        )
+
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(Modifier.height(statusBarTop + 8.dp))
-
-            // ── 顶栏收起（学 AuraPlayer 大标题收拢）：列表上滑 96dp 完成收起 ──
-            //    文字缩一点并滑到顶栏正中，登录 / 搜索按钮淡出隐藏
-            val listState = rememberLazyListState()
-            val density = LocalDensity.current
-            val collapseThresholdPx = with(density) { 96.dp.toPx() }
-            val topBarCollapse by remember(collapseThresholdPx) {
-                derivedStateOf {
-                    val scrolled = if (listState.firstVisibleItemIndex > 0) collapseThresholdPx
-                    else listState.firstVisibleItemScrollOffset.toFloat()
-                    (scrolled / collapseThresholdPx).coerceIn(0f, 1f)
-                }
-            }
-            // 布尔单独派生：只在越过阈值时重组一次（浮点进度只在绘制阶段读）
-            val topBarCollapsed by remember { derivedStateOf { topBarCollapse >= 0.55f } }
-            var barBounds by remember { mutableStateOf<Rect?>(null) }
-            var titleBounds by remember { mutableStateOf<Rect?>(null) }
-            var columnBounds by remember { mutableStateOf<Rect?>(null) }
 
             if (uiState.openedPlaylist != null) {
                 // ── 歌单详情视图 ──
@@ -263,27 +279,7 @@ fun DiscoverScreen(
                         .onGloballyPositioned { barBounds = it.boundsInWindow() },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .onGloballyPositioned { columnBounds = it.boundsInWindow() }
-                            .graphicsLayer {
-                                val g = titleBounds ?: return@graphicsLayer
-                                val bar = barBounds ?: return@graphicsLayer
-                                val col = columnBounds ?: return@graphicsLayer
-                                // 以标题中心为缩放原点：缩小一点 + 水平滑到顶栏正中
-                                transformOrigin = TransformOrigin(
-                                    ((g.center.x - col.left) / col.width.coerceAtLeast(1f))
-                                        .coerceIn(0f, 1f),
-                                    ((g.center.y - col.top) / col.height.coerceAtLeast(1f))
-                                        .coerceIn(0f, 1f)
-                                )
-                                val s = 1f - 0.14f * topBarCollapse
-                                scaleX = s
-                                scaleY = s
-                                translationX = topBarCollapse * (bar.center.x - g.center.x)
-                            }
-                    ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = if (ncmLogin == NcmLoginState.LOGGED_IN &&
                                 !ncmProfile?.nickname.isNullOrBlank()
@@ -297,7 +293,17 @@ fun DiscoverScreen(
                             color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.onGloballyPositioned { titleBounds = it.boundsInWindow() }
+                            modifier = Modifier
+                                .onGloballyPositioned { titleBounds = it.boundsInWindow() }
+                                .graphicsLayer {
+                                    val g = titleBounds ?: return@graphicsLayer
+                                    val bar = barBounds ?: return@graphicsLayer
+                                    // 逐行归中：以本行自身中心缩放，把中心送到顶栏正中
+                                    val s = 1f - 0.14f * topBarCollapse
+                                    scaleX = s
+                                    scaleY = s
+                                    translationX = topBarCollapse * (bar.center.x - g.center.x)
+                                }
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -307,7 +313,17 @@ fun DiscoverScreen(
                                 "搜索并播放网络歌曲 · 登录后更懂你"
                             },
                             fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.42f)
+                            color = Color.White.copy(alpha = 0.42f),
+                            modifier = Modifier
+                                .onGloballyPositioned { subtitleBounds = it.boundsInWindow() }
+                                .graphicsLayer {
+                                    val s2 = subtitleBounds ?: return@graphicsLayer
+                                    val bar = barBounds ?: return@graphicsLayer
+                                    val s = 1f - 0.14f * topBarCollapse
+                                    scaleX = s
+                                    scaleY = s
+                                    translationX = topBarCollapse * (bar.center.x - s2.center.x)
+                                }
                         )
                     }
 
