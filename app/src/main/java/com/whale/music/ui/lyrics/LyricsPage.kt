@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
@@ -51,12 +53,11 @@ fun LyricsPage(
     accent: Color,
     bgProfile: BgProfile?,
     bgBackdrop: Backdrop,
+    /** false 时由外层铺满整屏玻璃（竖屏歌词页），此处不再画卡片玻璃 */
+    showGlass: Boolean = true,
     onSeek: (Long) -> Unit
 ) {
     val style by LyricPrefs.style.collectAsState()
-    val glassStyle by LyricPrefs.glassStyle.collectAsState()
-    val glassBlurDp by LyricPrefs.glassBlurDp.collectAsState()
-    val glassVisibility by LyricPrefs.glassVisibility.collectAsState()
     val fontSize by LyricPrefs.fontSize.collectAsState()
     val simple by LyricPrefs.simpleChinese.collectAsState()
     val adaptMode by LyricPrefs.adaptMode.collectAsState()
@@ -71,41 +72,14 @@ fun LyricsPage(
 
     Box(Modifier.fillMaxSize()) {
         // 玻璃底板：折射背景层（强度/模糊/透出随设置即时变）
-        if (glassStyle != GlassStyle.OFF) {
-            val surfaceAlpha = glassStyle.surfaceAlpha *
-                (1f - (glassVisibility - 40f).coerceIn(0f, 60f) / 60f * 0.5f)
-            Box(
-                Modifier
+        if (showGlass) {
+            LyricsGlassPanel(
+                bgBackdrop = bgBackdrop,
+                modifier = Modifier
                     .fillMaxSize()
                     .padding(4.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .drawBackdrop(
-                        backdrop = bgBackdrop,
-                        shape = { RoundedCornerShape(24.dp) },
-                        effects = {
-                            vibrancy()
-                            blur(glassBlurDp.toFloat().dp.toPx())
-                            lens(8f.dp.toPx(), 14f.dp.toPx(), chromaticAberration = true)
-                        },
-                        highlight = { Highlight.Default.copy(alpha = 0.35f) },
-                        shadow = { Shadow(alpha = 0.25f) },
-                        onDrawSurface = {
-                            if (glassStyle.liquid) {
-                                // 液态玻璃：顶部镜面高光
-                                drawRect(
-                                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                                        listOf(
-                                            Color.White.copy(alpha = surfaceAlpha + 0.10f),
-                                            Color.White.copy(alpha = surfaceAlpha),
-                                            Color.White.copy(alpha = surfaceAlpha * 0.7f)
-                                        )
-                                    )
-                                )
-                            } else {
-                                drawRect(Color.White.copy(alpha = surfaceAlpha))
-                            }
-                        }
-                    )
+                    .clip(RoundedCornerShape(24.dp)),
+                panelShape = RoundedCornerShape(24.dp)
             )
         }
 
@@ -148,4 +122,51 @@ fun LyricsPage(
         }
 
     }
+}
+
+/**
+ * 歌词玻璃面板：折射背景层（强度/模糊/透出随设置即时变）。
+ * [panelShape] 可配：竖屏歌词页用直角铺满整屏，横屏维持圆角卡片。
+ */
+@Composable
+fun LyricsGlassPanel(
+    bgBackdrop: Backdrop,
+    modifier: Modifier = Modifier,
+    panelShape: Shape = RectangleShape
+) {
+    val glassStyle by LyricPrefs.glassStyle.collectAsState()
+    val glassBlurDp by LyricPrefs.glassBlurDp.collectAsState()
+    val glassVisibility by LyricPrefs.glassVisibility.collectAsState()
+    if (glassStyle == GlassStyle.OFF) return
+    val surfaceAlpha = glassStyle.surfaceAlpha *
+        (1f - (glassVisibility - 40f).coerceIn(0f, 60f) / 60f * 0.5f)
+    Box(
+        modifier.drawBackdrop(
+            backdrop = bgBackdrop,
+            shape = { panelShape },
+            effects = {
+                vibrancy()
+                blur(glassBlurDp.toFloat().dp.toPx())
+                lens(8f.dp.toPx(), 14f.dp.toPx(), chromaticAberration = true)
+            },
+            highlight = { Highlight.Default.copy(alpha = 0.35f) },
+            shadow = { Shadow(alpha = 0.25f) },
+            onDrawSurface = {
+                if (glassStyle.liquid) {
+                    // 液态玻璃：顶部镜面高光
+                    drawRect(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(
+                                Color.White.copy(alpha = surfaceAlpha + 0.10f),
+                                Color.White.copy(alpha = surfaceAlpha),
+                                Color.White.copy(alpha = surfaceAlpha * 0.7f)
+                            )
+                        )
+                    )
+                } else {
+                    drawRect(Color.White.copy(alpha = surfaceAlpha))
+                }
+            }
+        )
+    )
 }

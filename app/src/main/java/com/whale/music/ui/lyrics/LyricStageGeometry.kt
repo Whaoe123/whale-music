@@ -66,9 +66,10 @@ fun lyricStagePose(
         }
         LyricStyle.CLASSIC ->
             // 沉浸大字（对照图二）：当前句放大、邻句渐隐 + 景深模糊
+            //（字号已整体放大贴边，scale 只做轻微强调，防止贴边行被屏幕裁切）
             LyricStagePose(
                 x = 0f, y = distance,
-                scale = 0.94f + 0.18f * emphasis,
+                scale = 0.97f + 0.06f * emphasis,
                 opacity = 0.55f + 0.45f * emphasis,
                 blur = (a * 1.4f).coerceAtMost(5.5f) * unit,
                 emphasis = emphasis

@@ -220,18 +220,26 @@ fun StageLyrics(
             val w = with(localDensity) { maxWidth.toPx() }
             val h = with(localDensity) { maxHeight.toPx() }.coerceAtLeast(1f)
             val unit = w / 336f
+            // 歌词左右贴边：沉浸/空间/黑胶尽量贴屏幕两侧（各留约 7dp 防裁切）
             val left = when (style) {
                 LyricStyle.VINYL -> w * 0.35f
                 LyricStyle.FLUID -> with(localDensity) { 24.dp.toPx() }
-                else -> w * 0.04f
+                LyricStyle.SPATIAL -> w * 0.04f
+                else -> 6f * unit
             }
-            val textWidth = (w - left - if (style == LyricStyle.SPATIAL) w * 0.04f else 16f * unit)
-                .coerceAtLeast(1f)
+            val rightPad = when (style) {
+                LyricStyle.SPATIAL -> w * 0.04f
+                LyricStyle.CLASSIC, LyricStyle.VINYL -> 6f * unit
+                else -> 16f * unit
+            }
+            val textWidth = (w - left - rightPad).coerceAtLeast(1f)
             val textWidthDp = with(localDensity) { textWidth.toDp() }
             val font = fontSizeSp * when (style) {
                 LyricStyle.FLUID -> 1.3f
                 LyricStyle.SPATIAL -> 1.15f
-                LyricStyle.CLASSIC -> 1.12f
+                // 沉浸 / 黑胶：整体放大一档，长句折行后顶到两侧
+                LyricStyle.CLASSIC -> 1.35f
+                LyricStyle.VINYL -> 1.18f
                 else -> 1f
             }
             val mainStyle = TextStyle(

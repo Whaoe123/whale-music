@@ -301,6 +301,13 @@ fun PlayerScreen(
                 .fillMaxSize()
                 .layerBackdrop(backdrop)
         ) {
+            // 歌词页（竖屏）：液态玻璃铺满整屏，顶栏 / 歌词 / 进度都浮在玻璃上
+            if (!landscape && pagerState.currentPage == 1) {
+                com.whale.music.ui.lyrics.LyricsGlassPanel(
+                    bgBackdrop = bgBackdrop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -451,7 +458,7 @@ fun PlayerScreen(
                         )
                     }
 
-                    // 歌词页：全屏主题歌词（玻璃底板 + 5 种样式 + 设置面板）
+                    // 歌词页：全屏主题歌词（玻璃已由外层铺满整屏 + 5 种样式 + 设置面板）
                     page == 1 -> LyricsPage(
                         lines = lyrics,
                         positionMs = uiState.currentPosition,
@@ -461,6 +468,7 @@ fun PlayerScreen(
                         accent = accent,
                         bgProfile = bgProfile,
                         bgBackdrop = bgBackdrop,
+                        showGlass = false,
                         onSeek = viewModel::seekToMs
                     )
 
