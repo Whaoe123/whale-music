@@ -1,14 +1,21 @@
 package com.whale.music.ui.player
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -302,27 +309,33 @@ fun PlayerScreen(
                 .layerBackdrop(backdrop)
         ) {
             // 歌词页（竖屏）：液态玻璃铺满整屏，顶栏 / 歌词 / 进度都浮在玻璃上
-            // 注意：布局尺寸相关的切换必须用 settledPage（滑完落定）——
-            // 用 currentPage 会在滑到一半时改 pager 尺寸，滚动偏移错位（进页后偏右要拉一下才回中）
-            if (!landscape && pagerState.settledPage == 1) {
-                com.whale.music.ui.lyrics.LyricsGlassPanel(
-                    bgBackdrop = bgBackdrop,
+            // 随滑动渐入渐出；水平页宽恒定（不随页切换），只做高度过渡，pager 偏移不会错位
+            if (!landscape) {
+                AnimatedVisibility(
+                    visible = pagerState.currentPage == 1,
+                    enter = fadeIn(tween(220)),
+                    exit = fadeOut(tween(220)),
                     modifier = Modifier.fillMaxSize()
-                )
+                ) {
+                    com.whale.music.ui.lyrics.LyricsGlassPanel(
+                        bgBackdrop = bgBackdrop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     // 歌词页收窄水平留白，让沉浸歌词更接近满宽
-                    .padding(horizontal = if (pagerState.settledPage == 1 && !landscape) 20.dp else 32.dp)
+                    .padding(horizontal = if (!landscape) 20.dp else 32.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(
                         top = 4.dp,
                         // 横屏：进度/标题/控件收进各页底部簇，只给底部导航胶囊留净空
+                        // 竖屏恒定 104：高度差由歌名块/进度条的动画平滑过渡（页宽绝不能变）
                         bottom = if (landscape) {
                             if (navBarOn) 60.dp else 16.dp
-                        } else controlsBottomPadding +
-                            (if (pagerState.settledPage == 1) 74.dp else 104.dp)
+                        } else controlsBottomPadding + 104.dp
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -334,31 +347,37 @@ fun PlayerScreen(
                         .height(44.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (pagerState.settledPage == 1 && songNow != null) {
-                        // 歌词页：顶栏放歌名 + 歌手（沉浸歌词占满屏，歌名信息收进顶栏）
-                        Column(Modifier.weight(1f)) {
+                    Crossfade(
+                        targetState = pagerState.currentPage == 1 && songNow != null,
+                        modifier = Modifier.weight(1f),
+                        animationSpec = tween(220),
+                        label = "lyricTopBar"
+                    ) { showTitle ->
+                        if (showTitle && songNow != null) {
+                            // 歌词页：顶栏放歌名 + 歌手（沉浸歌词占满屏，歌名信息收进顶栏）
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = songNow.title,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White.copy(alpha = 0.92f),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.basicMarquee()
+                                )
+                                Text(
+                                    text = songNow.artist.ifBlank { songNow.album },
+                                    fontSize = 12.sp,
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        } else {
                             Text(
-                                text = songNow.title,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White.copy(alpha = 0.92f),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.basicMarquee()
-                            )
-                            Text(
-                                text = songNow.artist.ifBlank { songNow.album },
-                                fontSize = 12.sp,
-                                color = Color.White.copy(alpha = 0.5f),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                                text = "正在播放",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.45f)
                             )
                         }
-                    } else {
-                        Text(
-                            text = "正在播放",
-                            fontSize = 11.sp,
-                            color = Color.White.copy(alpha = 0.45f)
-                        )
-                        Spacer(Modifier.weight(1f))
                     }
                     PlayerTopActions(
                         onOpenLyricSettings = { showLyricSettings = true },
@@ -500,20 +519,26 @@ fun PlayerScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                // 歌词页隐藏大歌名块（歌名已收进顶栏），把整块高度让给沉浸歌词
-                if (pagerState.settledPage != 1) {
-                    // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行
-                    SongTextBlock(songNow, Modifier.fillMaxWidth())
+                // 歌曲信息块：歌词页渐隐收起（高度平滑收回，歌词无缝长高），其余页展示
+                AnimatedVisibility(
+                    visible = pagerState.currentPage != 1,
+                    enter = fadeIn(tween(220)) + expandVertically(tween(240), expandFrom = Alignment.Top),
+                    exit = fadeOut(tween(160)) + shrinkVertically(tween(240), shrinkTowards = Alignment.Top)
+                ) {
+                    Column {
+                        // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行
+                        SongTextBlock(songNow, Modifier.fillMaxWidth())
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(18.dp))
+                    }
                 }
 
                 // 进度条（独立组合，避免每 500ms 整页重组；激活段随封面主色渐变）
-                // 歌词页用紧凑型并下移到控件正上方
+                // 歌词页紧凑型 ↔ 常规型之间平滑过渡（高度/粗细/字号都不跳变）
                 ProgressArea(
                     viewModel = viewModel,
                     accent = accent,
-                    compact = pagerState.settledPage == 1
+                    compact = pagerState.currentPage == 1
                 )
             }
         }
@@ -542,6 +567,12 @@ fun PlayerScreen(
 
         // ── 播放控件 — 竖屏：sibling overlay，5 键标准控制栏（横屏已收进各页底部簇）──
         if (!landscape) {
+            // 歌词页：控件整体微缩（平滑过渡，不跳变）
+            val ctrlScale by animateFloatAsState(
+                targetValue = if (pagerState.currentPage == 1) 0.86f else 1f,
+                animationSpec = tween(240),
+                label = "ctrlScale"
+            )
             PlaybackGlassControls(
                 backdrop = backdrop,
                 isPlaying = isPlaying,
@@ -559,7 +590,7 @@ fun PlayerScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp),
                 // 歌词页：控件整体微缩，给沉浸歌词让出更多空间
-                scale = if (pagerState.settledPage == 1) 0.86f else 1f
+                scale = ctrlScale
             )
         }
 
@@ -1199,20 +1230,26 @@ internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color, compact: Bo
     val currentPosition = uiState.currentPosition
     val duration = uiState.duration
 
-    // 歌词页：细线模式（3.5dp 轨 + 小光环），其余页面维持 Capsule Bloom 粗条
+    // 歌词页紧凑型 ↔ 常规型：全部参数平滑过渡，切换页不跳变
+    val barH by animateDpAsState(if (compact) 18.dp else 28.dp, tween(240), label = "progBarH")
+    val trackTh by animateDpAsState(if (compact) 3.5.dp else 6.5.dp, tween(240), label = "progTrack")
+    val dragTh by animateDpAsState(if (compact) 5.5.dp else 8.5.dp, tween(240), label = "progDragTrack")
+    val haloDp by animateDpAsState(if (compact) 11.dp else 18.5.dp, tween(240), label = "progHalo")
+    val timeSp by animateFloatAsState(if (compact) 10f else 12f, tween(240), label = "progTimeSp")
+
     GlowProgressBar(
         value = progress,
         accent = accent,
-        modifier = Modifier.fillMaxWidth().height(if (compact) 14.dp else 28.dp),
-        thickness = if (compact) 3.5.dp else 6.5.dp,
-        dragThickness = if (compact) 5.5.dp else 8.5.dp,
-        haloSize = if (compact) 11.dp else 18.5.dp,
+        modifier = Modifier.fillMaxWidth().height(barH),
+        thickness = trackTh,
+        dragThickness = dragTh,
+        haloSize = haloDp,
         onSeek = { viewModel.seekTo(it) },
         onSeekFinished = { viewModel.seekTo(it) }
     )
 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(formatTime(currentPosition), fontSize = if (compact) 10.sp else 12.sp, color = Color.White.copy(alpha = 0.6f))
-        Text(formatTime(duration), fontSize = if (compact) 10.sp else 12.sp, color = Color.White.copy(alpha = 0.6f))
+        Text(formatTime(currentPosition), fontSize = timeSp.sp, color = Color.White.copy(alpha = 0.6f))
+        Text(formatTime(duration), fontSize = timeSp.sp, color = Color.White.copy(alpha = 0.6f))
     }
 }
