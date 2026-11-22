@@ -231,6 +231,7 @@ fun StageLyrics(
             val font = fontSizeSp * when (style) {
                 LyricStyle.FLUID -> 1.3f
                 LyricStyle.SPATIAL -> 1.15f
+                LyricStyle.CLASSIC -> 1.12f
                 else -> 1f
             }
             val mainStyle = TextStyle(
@@ -284,14 +285,21 @@ fun StageLyrics(
                             LyricStyle.FLUID -> 34.dp.toPx()
                             LyricStyle.SPATIAL -> 32.dp.toPx() +
                                 (reflectionHeights.getOrNull(index) ?: 0f) * 0.55f
+                            // 沉浸布局：行距拉开，歌词铺满整屏
+                            LyricStyle.CLASSIC -> 28.dp.toPx()
                             else -> 18.dp.toPx()
                         }
                     }
                 }
             }
             val centers = remember(heights, unit, style) {
-                val minSlot = if (style == LyricStyle.FLUID) 76f * unit else 56f * unit
-                val gap = 18f * unit
+                val minSlot = when (style) {
+                    LyricStyle.FLUID -> 76f * unit
+                    // 沉浸歌词：行槽更高，可见行铺满屏幕
+                    LyricStyle.CLASSIC -> 84f * unit
+                    else -> 56f * unit
+                }
+                val gap = (if (style == LyricStyle.CLASSIC) 24f else 18f) * unit
                 lyricStageCenters(heights, minSlot, gap)
             }
             val a = stage.floatValue
@@ -368,7 +376,8 @@ fun StageLyrics(
                             lyricColor(base, y / h, isCurrent, bgProfile)
                         } else base
                         val blurDp = with(localDensity) { pose.blur.toDp() }
-                        val centered = style == LyricStyle.SPATIAL
+                        // 经典（沉浸）居中对齐，其余样式维持左对齐 / 空间居中
+                        val centered = style == LyricStyle.SPATIAL || style == LyricStyle.CLASSIC
                         Column(
                             horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
                             modifier = Modifier
@@ -399,7 +408,8 @@ fun StageLyrics(
                                 )
                                 .padding(vertical = 4.dp)
                         ) {
-                            if (style != LyricStyle.VINYL) {
+                            // 沉浸歌词不显示行首时间戳（黑胶用内联时间轴）
+                            if (style != LyricStyle.VINYL && style != LyricStyle.CLASSIC) {
                                 Text(
                                     "${stageTime(line.timeMs)} · ${style.stageLabel}",
                                     fontSize = 10.sp, fontWeight = FontWeight.SemiBold,

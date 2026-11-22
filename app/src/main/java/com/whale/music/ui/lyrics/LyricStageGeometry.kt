@@ -62,7 +62,16 @@ fun lyricStagePose(
                 emphasis = emphasis
             )
         }
-        LyricStyle.CLASSIC, LyricStyle.VERTICAL ->
+        LyricStyle.CLASSIC ->
+            // 沉浸大字（对照图二）：当前句放大、邻句渐隐 + 景深模糊
+            LyricStagePose(
+                x = 0f, y = distance,
+                scale = 0.94f + 0.18f * emphasis,
+                opacity = 0.55f + 0.45f * emphasis,
+                blur = (a * 1.4f).coerceAtMost(5.5f) * unit,
+                emphasis = emphasis
+            )
+        LyricStyle.VERTICAL ->
             LyricStagePose(0f, distance, 1f, 1f, 0f, emphasis = emphasis)
     }
 }
