@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -126,13 +125,14 @@ fun LyricsPage(
 
 /**
  * 歌词玻璃面板：折射背景层（强度/模糊/透出随设置即时变）。
- * [panelShape] 可配：竖屏歌词页用直角铺满整屏，横屏维持圆角卡片。
+ * [panelShape] 可配：竖屏歌词页用 0 圆角铺满整屏（lens 效果只接受圆角形状，
+ * 直角 RectangleShape 会直接抛异常闪退，所以用 RoundedCornerShape(0.dp)）。
  */
 @Composable
 fun LyricsGlassPanel(
     bgBackdrop: Backdrop,
     modifier: Modifier = Modifier,
-    panelShape: Shape = RectangleShape
+    panelShape: Shape = RoundedCornerShape(0.dp)
 ) {
     val glassStyle by LyricPrefs.glassStyle.collectAsState()
     val glassBlurDp by LyricPrefs.glassBlurDp.collectAsState()
