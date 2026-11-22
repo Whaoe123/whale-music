@@ -302,7 +302,9 @@ fun PlayerScreen(
                 .layerBackdrop(backdrop)
         ) {
             // 歌词页（竖屏）：液态玻璃铺满整屏，顶栏 / 歌词 / 进度都浮在玻璃上
-            if (!landscape && pagerState.currentPage == 1) {
+            // 注意：布局尺寸相关的切换必须用 settledPage（滑完落定）——
+            // 用 currentPage 会在滑到一半时改 pager 尺寸，滚动偏移错位（进页后偏右要拉一下才回中）
+            if (!landscape && pagerState.settledPage == 1) {
                 com.whale.music.ui.lyrics.LyricsGlassPanel(
                     bgBackdrop = bgBackdrop,
                     modifier = Modifier.fillMaxSize()
@@ -312,7 +314,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // 歌词页收窄水平留白，让沉浸歌词更接近满宽
-                    .padding(horizontal = if (pagerState.currentPage == 1 && !landscape) 20.dp else 32.dp)
+                    .padding(horizontal = if (pagerState.settledPage == 1 && !landscape) 20.dp else 32.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(
                         top = 4.dp,
@@ -320,7 +322,7 @@ fun PlayerScreen(
                         bottom = if (landscape) {
                             if (navBarOn) 60.dp else 16.dp
                         } else controlsBottomPadding +
-                            (if (pagerState.currentPage == 1) 74.dp else 104.dp)
+                            (if (pagerState.settledPage == 1) 74.dp else 104.dp)
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -332,7 +334,7 @@ fun PlayerScreen(
                         .height(44.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (pagerState.currentPage == 1 && songNow != null) {
+                    if (pagerState.settledPage == 1 && songNow != null) {
                         // 歌词页：顶栏放歌名 + 歌手（沉浸歌词占满屏，歌名信息收进顶栏）
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -499,7 +501,7 @@ fun PlayerScreen(
                 }
 
                 // 歌词页隐藏大歌名块（歌名已收进顶栏），把整块高度让给沉浸歌词
-                if (pagerState.currentPage != 1) {
+                if (pagerState.settledPage != 1) {
                     // 歌曲信息：标题跑马灯 + 「歌手 · 专辑 · 来源」副行
                     SongTextBlock(songNow, Modifier.fillMaxWidth())
 
@@ -511,7 +513,7 @@ fun PlayerScreen(
                 ProgressArea(
                     viewModel = viewModel,
                     accent = accent,
-                    compact = pagerState.currentPage == 1
+                    compact = pagerState.settledPage == 1
                 )
             }
         }
@@ -557,7 +559,7 @@ fun PlayerScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp),
                 // 歌词页：控件整体微缩，给沉浸歌词让出更多空间
-                scale = if (pagerState.currentPage == 1) 0.86f else 1f
+                scale = if (pagerState.settledPage == 1) 0.86f else 1f
             )
         }
 
