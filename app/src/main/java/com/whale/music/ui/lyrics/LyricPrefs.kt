@@ -86,6 +86,10 @@ object LyricPrefs {
     private val _hideStatusBar = MutableStateFlow(false)
     val hideStatusBar: StateFlow<Boolean> = _hideStatusBar
 
+    /** 沉浸歌词页（全屏玻璃 + 大字贴边 + 紧凑控件）；关 = 经典布局 */
+    private val _immersivePage = MutableStateFlow(true)
+    val immersivePage: StateFlow<Boolean> = _immersivePage
+
     private val _lyricHaptic = MutableStateFlow(true)
     val lyricHaptic: StateFlow<Boolean> = _lyricHaptic
 
@@ -112,6 +116,7 @@ object LyricPrefs {
         _simpleChinese.value = prefs.getBoolean("simple_cn", true)
         _adaptMode.value = LyricAdaptMode.fromOrdinal(prefs.getInt("adapt_mode", LyricAdaptMode.ALL.ordinal))
         _hideStatusBar.value = prefs.getBoolean("hide_status_bar", false)
+        _immersivePage.value = prefs.getBoolean("immersive_page", true)
         _lyricHaptic.value = prefs.getBoolean("lyric_haptic", true)
         _offsets.value = parseOffsets(prefs.getString("offsets", "{}") ?: "{}")
     }
@@ -130,6 +135,11 @@ object LyricPrefs {
         val obj = JSONObject()
         map.forEach { (k, v) -> obj.put(k, v.toDouble()) }
         persist { e -> e.putString("offsets", obj.toString()) }
+    }
+
+    fun setImmersivePage(v: Boolean) {
+        _immersivePage.value = v
+        persist { e -> e.putBoolean("immersive_page", v) }
     }
 
     fun setStyle(v: LyricStyle) {

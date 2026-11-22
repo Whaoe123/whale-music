@@ -25,7 +25,9 @@ fun lyricStagePose(
     diff: Float,
     distance: Float,
     unit: Float,
-    index: Int
+    index: Int,
+    /** 沉浸歌词页开关：false = 经典布局（无景深/无放大/满不透明） */
+    immersive: Boolean = true
 ): LyricStagePose {
     val a = abs(diff)
     val t = (1f - a).coerceIn(0f, 1f)
@@ -40,13 +42,18 @@ fun lyricStagePose(
             blur = (a * 1.5f).coerceAtMost(5.5f) * unit,
             emphasis = emphasis
         )
-        LyricStyle.VINYL -> LyricStagePose(
+        LyricStyle.VINYL -> if (immersive) LyricStagePose(
             x = -a.pow(1.45f) * 9f * unit, y = distance,
             scale = 0.78f + 0.27f * emphasis,
-            // 对比拉开：当前句亮、邻句明显暗下去，再加景深模糊（原来是全亮不糊）
+            // 沉浸版：当前句亮、邻句明显暗下去，再加景深模糊
             opacity = ((0.60f - a * 0.22f).coerceAtLeast(0.14f) + 0.36f * emphasis) * edge,
             blur = (a * 1.3f).coerceAtMost(5f) * unit,
             rotationZ = diff * 10.5f, emphasis = emphasis
+        ) else LyricStagePose(
+            x = -a.pow(1.45f) * 9f * unit, y = distance,
+            scale = 0.775f + 0.225f * emphasis,
+            opacity = ((0.75f - a * 0.22f).coerceAtLeast(0.16f) + 0.25f * emphasis) * edge,
+            blur = 0f, rotationZ = diff * 10.5f, emphasis = emphasis
         )
         LyricStyle.SPATIAL -> {
             val future = diff > 0f
@@ -65,15 +72,20 @@ fun lyricStagePose(
             )
         }
         LyricStyle.CLASSIC ->
-            // 沉浸大字（对照图二）：当前句放大、邻句渐隐 + 景深模糊
-            //（字号已整体放大贴边，scale 只做轻微强调，防止贴边行被屏幕裁切）
-            LyricStagePose(
-                x = 0f, y = distance,
-                scale = 0.97f + 0.06f * emphasis,
-                opacity = 0.55f + 0.45f * emphasis,
-                blur = (a * 1.4f).coerceAtMost(5.5f) * unit,
-                emphasis = emphasis
-            )
+            if (immersive) {
+                // 沉浸大字：当前句放大、邻句渐隐 + 景深模糊
+                //（字号已整体放大贴边，scale 只做轻微强调，防止贴边行被屏幕裁切）
+                LyricStagePose(
+                    x = 0f, y = distance,
+                    scale = 0.97f + 0.06f * emphasis,
+                    opacity = 0.55f + 0.45f * emphasis,
+                    blur = (a * 1.4f).coerceAtMost(5.5f) * unit,
+                    emphasis = emphasis
+                )
+            } else {
+                // 经典布局：原样式（等大、不透明、无模糊）
+                LyricStagePose(0f, distance, 1f, 1f, 0f, emphasis = emphasis)
+            }
         LyricStyle.VERTICAL ->
             LyricStagePose(0f, distance, 1f, 1f, 0f, emphasis = emphasis)
     }

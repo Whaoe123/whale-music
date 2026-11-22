@@ -81,6 +81,7 @@ fun LyricSettingsSheet(
     val simple by LyricPrefs.simpleChinese.collectAsState()
     val adaptMode by LyricPrefs.adaptMode.collectAsState()
     val hideStatusBar by LyricPrefs.hideStatusBar.collectAsState()
+    val immersive by LyricPrefs.immersivePage.collectAsState()
     val haptic by LyricPrefs.lyricHaptic.collectAsState()
     val offsets by LyricPrefs.offsets.collectAsState()
     val offsetSec = offsets[songKey] ?: 0f
@@ -224,6 +225,12 @@ fun LyricSettingsSheet(
             Spacer(Modifier.height(8.dp))
 
             // ── 开关行 ──
+            SlimSwitchRow(
+                title = "沉浸歌词页",
+                desc = "全屏玻璃 + 大字歌词贴边 + 紧凑控件；关 = 经典布局（歌名块 + 常规进度条）",
+                checked = immersive,
+                onChange = { LyricPrefs.setImmersivePage(it) }
+            )
             SlimSwitchRow(
                 title = "隐藏状态栏",
                 desc = "仅对全屏歌词页生效；返回封面页自动恢复",

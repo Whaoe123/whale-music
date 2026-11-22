@@ -210,6 +210,8 @@ fun PlayerScreen(
     val pagerState = rememberPagerState(pageCount = { 3 })
     val scope = rememberCoroutineScope()
     val hideStatusBar by com.whale.music.ui.lyrics.LyricPrefs.hideStatusBar.collectAsState()
+    // 沉浸歌词页开关：关 = 经典布局（歌名块 + 常规进度条 + 玻璃卡片）
+    val immersive by com.whale.music.ui.lyrics.LyricPrefs.immersivePage.collectAsState()
     val songNow = currentSong
     // 横屏：Coverflow 封面墙 + 左封面右歌词 + 横排底部
     val landscape = LocalConfiguration.current.let {
@@ -312,7 +314,7 @@ fun PlayerScreen(
             // 随滑动渐入渐出；水平页宽恒定（不随页切换），只做高度过渡，pager 偏移不会错位
             if (!landscape) {
                 AnimatedVisibility(
-                    visible = pagerState.currentPage == 1,
+                    visible = immersive && pagerState.currentPage == 1,
                     enter = fadeIn(tween(220)),
                     exit = fadeOut(tween(220)),
                     modifier = Modifier.fillMaxSize()
@@ -327,7 +329,7 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     // 歌词页收窄水平留白，让沉浸歌词更接近满宽
-                    .padding(horizontal = if (!landscape) 20.dp else 32.dp)
+                    .padding(horizontal = if (!landscape && immersive) 20.dp else 32.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(
                         top = 4.dp,
@@ -348,7 +350,7 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Crossfade(
-                        targetState = pagerState.currentPage == 1 && songNow != null,
+                        targetState = immersive && pagerState.currentPage == 1 && songNow != null,
                         modifier = Modifier.weight(1f),
                         animationSpec = tween(220),
                         label = "lyricTopBar"
@@ -489,7 +491,7 @@ fun PlayerScreen(
                         accent = accent,
                         bgProfile = bgProfile,
                         bgBackdrop = bgBackdrop,
-                        showGlass = false,
+                        showGlass = !immersive,
                         onSeek = viewModel::seekToMs
                     )
 
@@ -521,7 +523,7 @@ fun PlayerScreen(
 
                 // 歌曲信息块：歌词页渐隐收起（高度平滑收回，歌词无缝长高），其余页展示
                 AnimatedVisibility(
-                    visible = pagerState.currentPage != 1,
+                    visible = !(immersive && pagerState.currentPage == 1),
                     enter = fadeIn(tween(220)) + expandVertically(tween(240), expandFrom = Alignment.Top),
                     exit = fadeOut(tween(160)) + shrinkVertically(tween(240), shrinkTowards = Alignment.Top)
                 ) {
@@ -538,7 +540,7 @@ fun PlayerScreen(
                 ProgressArea(
                     viewModel = viewModel,
                     accent = accent,
-                    compact = pagerState.currentPage == 1
+                    compact = immersive && pagerState.currentPage == 1
                 )
             }
         }
@@ -569,7 +571,7 @@ fun PlayerScreen(
         if (!landscape) {
             // 歌词页：控件整体微缩（平滑过渡，不跳变）
             val ctrlScale by animateFloatAsState(
-                targetValue = if (pagerState.currentPage == 1) 0.86f else 1f,
+                targetValue = if (immersive && pagerState.currentPage == 1) 0.86f else 1f,
                 animationSpec = tween(240),
                 label = "ctrlScale"
             )

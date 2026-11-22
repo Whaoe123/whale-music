@@ -58,6 +58,7 @@ fun LyricsPage(
 ) {
     val style by LyricPrefs.style.collectAsState()
     val fontSize by LyricPrefs.fontSize.collectAsState()
+    val immersive by LyricPrefs.immersivePage.collectAsState()
     val simple by LyricPrefs.simpleChinese.collectAsState()
     val adaptMode by LyricPrefs.adaptMode.collectAsState()
     val haptic by LyricPrefs.lyricHaptic.collectAsState()
@@ -115,6 +116,7 @@ fun LyricsPage(
                     accent = accent,
                     offsetMs = offsetMs,
                     scrollHaptic = haptic,
+                    immersive = immersive,
                     onSeek = onSeek
                 )
             }

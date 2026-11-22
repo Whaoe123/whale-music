@@ -135,6 +135,8 @@ fun StageLyrics(
     accent: Color,
     offsetMs: Long,
     scrollHaptic: Boolean,
+    /** 沉浸歌词页开关：false = 经典布局（原字号/边距/时间戳/无景深） */
+    immersive: Boolean = true,
     onSeek: (Long) -> Unit
 ) {
     if (lines.isEmpty()) return
@@ -220,16 +222,16 @@ fun StageLyrics(
             val w = with(localDensity) { maxWidth.toPx() }
             val h = with(localDensity) { maxHeight.toPx() }.coerceAtLeast(1f)
             val unit = w / 336f
-            // 歌词左右贴边：沉浸/空间/黑胶尽量贴屏幕两侧（各留约 7dp 防裁切）
+            // 沉浸：歌词左右贴边（各留约 7dp 防裁切）；经典布局维持原边距
             val left = when (style) {
                 LyricStyle.VINYL -> w * 0.35f
                 LyricStyle.FLUID -> with(localDensity) { 24.dp.toPx() }
                 LyricStyle.SPATIAL -> w * 0.04f
-                else -> 6f * unit
+                else -> if (immersive) 6f * unit else w * 0.04f
             }
             val rightPad = when (style) {
                 LyricStyle.SPATIAL -> w * 0.04f
-                LyricStyle.CLASSIC, LyricStyle.VINYL -> 6f * unit
+                LyricStyle.CLASSIC, LyricStyle.VINYL -> if (immersive) 6f * unit else 16f * unit
                 else -> 16f * unit
             }
             val textWidth = (w - left - rightPad).coerceAtLeast(1f)
@@ -237,9 +239,9 @@ fun StageLyrics(
             val font = fontSizeSp * when (style) {
                 LyricStyle.FLUID -> 1.3f
                 LyricStyle.SPATIAL -> 1.15f
-                // 沉浸 / 黑胶：整体放大一档，长句折行后顶到两侧
-                LyricStyle.CLASSIC -> 1.35f
-                LyricStyle.VINYL -> 1.18f
+                // 沉浸 / 黑胶：整体放大一档，长句折行后顶到两侧（经典布局维持原字号）
+                LyricStyle.CLASSIC -> if (immersive) 1.35f else 1f
+                LyricStyle.VINYL -> if (immersive) 1.18f else 1f
                 else -> 1f
             }
             val mainStyle = TextStyle(
@@ -247,15 +249,15 @@ fun StageLyrics(
                 lineHeight = (font * 1.38f).sp,
                 fontWeight = FontWeight.ExtraBold
             )
-            // 时间戳样式必须与测量一致，黑胶的缩进靠它（弱化：小一号、低对比）
-            val timeStyle = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+            // 时间戳样式必须与测量一致，黑胶的缩进靠它（沉浸版弱化：小一号）
+            val timeStyle = TextStyle(fontSize = (if (immersive) 9 else 10).sp, fontWeight = FontWeight.SemiBold)
             val reflectionStyle = TextStyle(
                 fontSize = (font * 0.92f).sp,
                 lineHeight = (font * 1.27f).sp,
                 fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center
             )
-            val reflectionHeights = remember(lines, textWidth, fontSizeSp, localDensity, style) {
+            val reflectionHeights = remember(lines, textWidth, fontSizeSp, localDensity, style, immersive) {
                 if (style == LyricStyle.SPATIAL) lines.map {
                     measurer.measure(
                         AnnotatedString(it.text), reflectionStyle,
@@ -264,7 +266,7 @@ fun StageLyrics(
                 } else emptyList()
             }
             // 黑胶时间戳内联左侧：实测最宽时间戳定宽，所有句子左边缘对齐
-            val vinylGutterPx = remember(style, lines, localDensity) {
+            val vinylGutterPx = remember(style, lines, localDensity, immersive) {
                 if (style != LyricStyle.VINYL) {
                     0f
                 } else {
@@ -282,7 +284,7 @@ fun StageLyrics(
             val vinylTimeWidthDp = with(localDensity) {
                 (vinylGutterPx - 8.dp.toPx()).coerceAtLeast(0f).toDp()
             }
-            val heights = remember(lines, textWidth, lyricTextWidth, fontSizeSp, localDensity, style) {
+            val heights = remember(lines, textWidth, lyricTextWidth, fontSizeSp, localDensity, style, immersive) {
                 lines.mapIndexed { index, line ->
                     val main = measurer.measure(
                         AnnotatedString(line.text), mainStyle,
@@ -294,20 +296,20 @@ fun StageLyrics(
                             LyricStyle.SPATIAL -> 32.dp.toPx() +
                                 (reflectionHeights.getOrNull(index) ?: 0f) * 0.55f
                             // 沉浸布局：行距拉开，歌词铺满整屏
-                            LyricStyle.CLASSIC -> 28.dp.toPx()
+                            LyricStyle.CLASSIC -> if (immersive) 28.dp.toPx() else 18.dp.toPx()
                             else -> 18.dp.toPx()
                         }
                     }
                 }
             }
-            val centers = remember(heights, unit, style) {
+            val centers = remember(heights, unit, style, immersive) {
                 val minSlot = when (style) {
                     LyricStyle.FLUID -> 76f * unit
                     // 沉浸歌词：行槽更高，可见行铺满屏幕
-                    LyricStyle.CLASSIC -> 84f * unit
+                    LyricStyle.CLASSIC -> if (immersive) 84f * unit else 56f * unit
                     else -> 56f * unit
                 }
-                val gap = (if (style == LyricStyle.CLASSIC) 24f else 18f) * unit
+                val gap = (if (style == LyricStyle.CLASSIC && immersive) 24f else 18f) * unit
                 lyricStageCenters(heights, minSlot, gap)
             }
             val a = stage.floatValue
@@ -375,7 +377,7 @@ fun StageLyrics(
                 for (index in from..to) {
                     key(index) {
                         val line = lines[index]
-                        val pose = lyricStagePose(style, index - a, centers[index] - anchorCenter, unit, index)
+                        val pose = lyricStagePose(style, index - a, centers[index] - anchorCenter, unit, index, immersive)
                         val isCurrent = index == current
                         val emphasis = if (current >= 0) pose.emphasis else 0f
                         val base = lerpColor(Color.White.copy(alpha = 0.55f), accent, emphasis)
@@ -384,8 +386,8 @@ fun StageLyrics(
                             lyricColor(base, y / h, isCurrent, bgProfile)
                         } else base
                         val blurDp = with(localDensity) { pose.blur.toDp() }
-                        // 经典（沉浸）居中对齐，其余样式维持左对齐 / 空间居中
-                        val centered = style == LyricStyle.SPATIAL || style == LyricStyle.CLASSIC
+                        // 沉浸居中对齐；经典布局左对齐（空间样式恒居中）
+                        val centered = style == LyricStyle.SPATIAL || (style == LyricStyle.CLASSIC && immersive)
                         Column(
                             horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
                             modifier = Modifier
@@ -416,8 +418,8 @@ fun StageLyrics(
                                 )
                                 .padding(vertical = 4.dp)
                         ) {
-                            // 沉浸歌词不显示行首时间戳（黑胶用内联时间轴）
-                            if (style != LyricStyle.VINYL && style != LyricStyle.CLASSIC) {
+                            // 沉浸歌词不显示行首时间戳（经典布局保留；黑胶用内联时间轴）
+                            if (style != LyricStyle.VINYL && !(style == LyricStyle.CLASSIC && immersive)) {
                                 Text(
                                     "${stageTime(line.timeMs)} · ${style.stageLabel}",
                                     fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
@@ -432,8 +434,12 @@ fun StageLyrics(
                                 ) {
                                     Text(
                                         stageTime(line.timeMs), style = timeStyle,
-                                        // 当前句时间戳稍亮，其余压到很淡，不跟大字歌词抢视线
-                                        color = accent.copy(alpha = 0.28f + 0.42f * emphasis),
+                                        // 沉浸版：当前句时间戳稍亮，其余压到很淡；经典布局原样亮色
+                                        color = if (immersive) {
+                                            accent.copy(alpha = 0.28f + 0.42f * emphasis)
+                                        } else {
+                                            accent
+                                        },
                                         textAlign = TextAlign.End,
                                         modifier = Modifier.padding(top = 5.dp).then(
                                             if (vinylTimeWidthDp > 0.dp) Modifier.width(vinylTimeWidthDp) else Modifier
