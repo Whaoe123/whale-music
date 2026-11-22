@@ -58,6 +58,8 @@ internal fun GlowProgressBar(
     dragThickness: Dp = 8.5.dp,
     /** 头部光环（迷你条等小场景关掉） */
     halo: Boolean = true,
+    /** 头部光环尺寸（细线模式调小，免得光环比线还粗） */
+    haloSize: Dp = 18.5.dp,
     /** 外扩光晕 */
     bloom: Boolean = true,
     /** 连续拖动回调（null = 不可拖） */
@@ -129,6 +131,7 @@ internal fun GlowProgressBar(
             thicknessPx = thicknessAnim.toPx().coerceAtMost(size.height),
             accentColor = accent,
             halo = halo,
+            haloSize = haloSize,
             bloom = bloom
         )
     }
@@ -141,6 +144,7 @@ private fun DrawScope.drawCapsuleBloomProgress(
     thicknessPx: Float,
     accentColor: Color,
     halo: Boolean,
+    haloSize: Dp,
     bloom: Boolean
 ) {
     val cy = size.height / 2f
@@ -195,7 +199,7 @@ private fun DrawScope.drawCapsuleBloomProgress(
 
     // ── 头部椭圆光环 ──
     if (halo) {
-        val haloRadius = (if (dragging) 22.dp else 18.5.dp).toPx()
+        val haloRadius = (if (dragging) haloSize * 1.19f else haloSize).toPx()
         val maxVerticalScale =
             ((cy - 0.5.dp.toPx()).coerceAtLeast(1f) / haloRadius).coerceIn(0.2f, 1f)
         val haloScaleY = minOf(0.616f, maxVerticalScale)

@@ -42,9 +42,11 @@ fun lyricStagePose(
         )
         LyricStyle.VINYL -> LyricStagePose(
             x = -a.pow(1.45f) * 9f * unit, y = distance,
-            scale = 0.775f + 0.225f * emphasis,
-            opacity = ((0.75f - a * 0.22f).coerceAtLeast(0.16f) + 0.25f * emphasis) * edge,
-            blur = 0f, rotationZ = diff * 10.5f, emphasis = emphasis
+            scale = 0.78f + 0.27f * emphasis,
+            // 对比拉开：当前句亮、邻句明显暗下去，再加景深模糊（原来是全亮不糊）
+            opacity = ((0.60f - a * 0.22f).coerceAtLeast(0.14f) + 0.36f * emphasis) * edge,
+            blur = (a * 1.3f).coerceAtMost(5f) * unit,
+            rotationZ = diff * 10.5f, emphasis = emphasis
         )
         LyricStyle.SPATIAL -> {
             val future = diff > 0f

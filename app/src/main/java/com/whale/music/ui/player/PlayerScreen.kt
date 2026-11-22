@@ -1189,10 +1189,14 @@ internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color, compact: Bo
     val currentPosition = uiState.currentPosition
     val duration = uiState.duration
 
+    // 歌词页：细线模式（3.5dp 轨 + 小光环），其余页面维持 Capsule Bloom 粗条
     GlowProgressBar(
         value = progress,
         accent = accent,
-        modifier = Modifier.fillMaxWidth().height(if (compact) 18.dp else 28.dp),
+        modifier = Modifier.fillMaxWidth().height(if (compact) 14.dp else 28.dp),
+        thickness = if (compact) 3.5.dp else 6.5.dp,
+        dragThickness = if (compact) 5.5.dp else 8.5.dp,
+        haloSize = if (compact) 11.dp else 18.5.dp,
         onSeek = { viewModel.seekTo(it) },
         onSeekFinished = { viewModel.seekTo(it) }
     )

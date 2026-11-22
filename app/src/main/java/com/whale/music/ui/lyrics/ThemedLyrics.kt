@@ -239,8 +239,8 @@ fun StageLyrics(
                 lineHeight = (font * 1.38f).sp,
                 fontWeight = FontWeight.ExtraBold
             )
-            // 时间戳样式必须与测量一致，黑胶的缩进靠它
-            val timeStyle = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            // 时间戳样式必须与测量一致，黑胶的缩进靠它（弱化：小一号、低对比）
+            val timeStyle = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
             val reflectionStyle = TextStyle(
                 fontSize = (font * 0.92f).sp,
                 lineHeight = (font * 1.27f).sp,
@@ -424,7 +424,9 @@ fun StageLyrics(
                                 ) {
                                     Text(
                                         stageTime(line.timeMs), style = timeStyle,
-                                        color = accent, textAlign = TextAlign.End,
+                                        // 当前句时间戳稍亮，其余压到很淡，不跟大字歌词抢视线
+                                        color = accent.copy(alpha = 0.28f + 0.42f * emphasis),
+                                        textAlign = TextAlign.End,
                                         modifier = Modifier.padding(top = 5.dp).then(
                                             if (vinylTimeWidthDp > 0.dp) Modifier.width(vinylTimeWidthDp) else Modifier
                                         )
