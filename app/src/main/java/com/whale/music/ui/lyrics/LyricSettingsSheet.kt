@@ -83,6 +83,7 @@ fun LyricSettingsSheet(
     val hideStatusBar by LyricPrefs.hideStatusBar.collectAsState()
     val immersive by LyricPrefs.immersivePage.collectAsState()
     val haptic by LyricPrefs.lyricHaptic.collectAsState()
+    val autoHide by LyricPrefs.autoHideControls.collectAsState()
     val offsets by LyricPrefs.offsets.collectAsState()
     val offsetSec = offsets[songKey] ?: 0f
 
@@ -236,6 +237,12 @@ fun LyricSettingsSheet(
                 desc = "仅对全屏歌词页生效；返回封面页自动恢复",
                 checked = hideStatusBar,
                 onChange = { LyricPrefs.setHideStatusBar(it) }
+            )
+            SlimSwitchRow(
+                title = "闲置自动隐藏控件",
+                desc = "歌词页 3 秒不动就把歌名、进度条、设置与切歌按钮淡出，点一下再淡回来",
+                checked = autoHide,
+                onChange = { LyricPrefs.setAutoHideControls(it) }
             )
             SlimSwitchRow(
                 title = "滚动歌词震动",

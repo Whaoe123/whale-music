@@ -73,6 +73,7 @@ class DiscoverViewModel @Inject constructor(
     private val session: NcmSession,
     private val playerManager: MusicPlayerManager,
     private val likedCatalog: LikedCatalog,
+    private val likedWriter: com.whale.music.data.sync.NcmLikeWriter,
     private val lxManager: com.whale.music.data.lx.LxSourceManager
 ) : ViewModel() {
 
@@ -188,12 +189,28 @@ class DiscoverViewModel @Inject constructor(
         likedCatalog.isLiked(song.title, song.artist)
 
     fun toggleFavorite(song: RemoteSong) {
-        // 红心歌单是只读真值源：这类歌爱心恒亮，点击不改动任何数据
-        if (isLikedByNcm(song)) {
-            _uiState.update { it.copy(message = "这首已在网易云收藏里，去网易云取消即可") }
-            return
-        }
         viewModelScope.launch {
+            // 先试写回网易云红心（登录后点了就生效，不再提示"去网易云操作"）
+            val target = !isLikedByNcm(song)
+            val wrote = likedWriter.toggle(
+                title = song.title,
+                artist = song.artist,
+                album = song.album,
+                coverUrl = song.coverUrl,
+                durationMs = song.duration,
+                wyId = if (song.source == "wy") song.rid else null
+            )
+            if (wrote != null) {
+                // 已经在网易云收藏表里的重复项顺手清掉，避免「我喜欢的音乐」出现两条
+                if (wrote && remoteSongDao.count(song.songId) > 0) remoteSongDao.delete(song.songId)
+                _uiState.update {
+                    it.copy(
+                        message = if (wrote) "已收藏「${song.title}」"
+                        else "已取消收藏「${song.title}」"
+                    )
+                }
+                return@launch
+            }
             val exists = remoteSongDao.count(song.songId) > 0
             if (exists) {
                 remoteSongDao.delete(song.songId)

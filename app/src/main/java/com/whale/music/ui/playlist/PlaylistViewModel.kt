@@ -60,7 +60,8 @@ class PlaylistViewModel @Inject constructor(
     private val remoteController: RemoteMusicController,
     private val playerManager: MusicPlayerManager,
     private val ncmLikedSync: NcmLikedSync,
-    private val likedCatalog: LikedCatalog
+    private val likedCatalog: LikedCatalog,
+    private val likedWriter: com.whale.music.data.sync.NcmLikeWriter
 ) : ViewModel() {
 
     private val operation = MutableStateFlow(PlaylistOperationState())
@@ -234,7 +235,16 @@ class PlaylistViewModel @Inject constructor(
         viewModelScope.launch {
             when {
                 row.songKey.startsWith("ext_ncm_") -> {
-                    toast("这首来自网易云收藏，请到网易云里取消")
+                    val ncmId = row.songKey.removePrefix("ext_ncm_").toLongOrNull()
+                    val ok = ncmId != null && likedWriter.toggle(
+                        title = row.title,
+                        artist = row.artist,
+                        album = row.album,
+                        coverUrl = row.coverUrl,
+                        durationMs = row.duration,
+                        wyId = ncmId
+                    ) == false
+                    toast(if (ok) "已取消收藏" else "取消失败，检查网易云登录后重试")
                 }
                 row.songKey.startsWith("remote_") -> {
                     remoteSongDao.delete(row.songKey.removePrefix("remote_"))

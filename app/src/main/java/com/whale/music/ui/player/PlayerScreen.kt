@@ -16,6 +16,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -76,6 +78,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -91,6 +97,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -241,6 +248,27 @@ fun PlayerScreen(
         }
     }
 
+    // ── 歌词页闲置自动隐藏（歌名 / 进度条 / 设置与切歌按钮一起淡出）──
+    // 任何触摸都会把 lastTouchAt 推一下 → 控件回来并重新计时
+    val autoHideOn by com.whale.music.ui.lyrics.LyricPrefs.autoHideControls.collectAsState()
+    var chromeShown by remember { mutableStateOf(true) }
+    var lastTouchAt by remember { mutableLongStateOf(0L) }
+    val autoHideNow = autoHideOn && !landscape && pagerState.currentPage == 1 &&
+        !pagerState.isScrollInProgress &&
+        !showLyricSettings && !showFxSheet && !moreMenu && !showAddSheet
+    LaunchedEffect(autoHideNow) {
+        if (!autoHideNow) {
+            chromeShown = true
+            return@LaunchedEffect
+        }
+        // collectLatest：新的一次触摸会取消上一次的 3 秒延时、重新开始计时
+        snapshotFlow { lastTouchAt }.collectLatest {
+            chromeShown = true
+            delay(3000)
+            chromeShown = false
+        }
+    }
+
     // 返回键分层：先退出歌词/队列页，退完才走页面级返回
     BackHandler(enabled = pagerState.currentPage != 0) {
         scope.launch { pagerState.animateScrollToPage(0) }
@@ -258,6 +286,20 @@ fun PlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            // 任何触摸（点击/滑动/长按）都先让控件出现；200ms 内不重复触发，避免拖动时狂重组
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    var last = 0L
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        val now = System.currentTimeMillis()
+                        if (now - last > 200) {
+                            last = now
+                            lastTouchAt = now
+                        }
+                    }
+                }
+            }
     ) {
         // ── 背景层：模糊封面 + 暗纱 + 氛围光 + 底部渐变（玻璃折射源）──
         Box(
@@ -348,6 +390,11 @@ fun PlayerScreen(
             ) {
             // 顶栏（竖屏）：「正在播放」+ 歌词设置 + 更多；横屏改为右上角浮层（省 44dp 给封面墙）
             if (!landscape) {
+                AnimatedVisibility(
+                    visible = chromeShown,
+                    enter = fadeIn(tween(420)) + slideInVertically(tween(460)) { -it / 4 },
+                    exit = fadeOut(tween(300)) + slideOutVertically(tween(420)) { -it / 5 }
+                ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -395,6 +442,7 @@ fun PlayerScreen(
                         onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
                         onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } }
                     )
+                }
                 }
             }
 
@@ -511,6 +559,11 @@ fun PlayerScreen(
 
             // 竖屏：金标 + 歌曲信息 + 进度条（横屏已收进各页底部簇）
             if (!landscape) {
+                AnimatedVisibility(
+                    visible = chromeShown,
+                    enter = fadeIn(tween(420)) + slideInVertically(tween(460)) { it / 10 },
+                    exit = fadeOut(tween(300)) + slideOutVertically(tween(420)) { it / 12 }
+                ) {
                 if (hiresBadgeOn && rememberHiResVisible(currentSong)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -547,6 +600,7 @@ fun PlayerScreen(
                     accent = accent,
                     compact = immersive && pagerState.currentPage == 1
                 )
+                }
             }
         }
 
@@ -580,25 +634,31 @@ fun PlayerScreen(
                 animationSpec = tween(240),
                 label = "ctrlScale"
             )
-            PlaybackGlassControls(
-                backdrop = backdrop,
-                isPlaying = isPlaying,
-                playMode = playMode,
-                modeLabel = playModeLabel,
-                isFavorite = isFavorite,
-                onPrevious = viewModel::previous,
-                onTogglePlay = viewModel::togglePlay,
-                onNext = viewModel::next,
-                onToggleMode = viewModel::togglePlayMode,
-                onToggleFavorite = viewModel::toggleFavorite,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = controlsBottomPadding)
-                    .fillMaxWidth()
-                    .padding(horizontal = 28.dp),
-                // 歌词页：控件整体微缩，给沉浸歌词让出更多空间
-                scale = ctrlScale
-            )
+            AnimatedVisibility(
+                visible = chromeShown,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = fadeIn(tween(420)) + slideInVertically(tween(460)) { it / 8 },
+                exit = fadeOut(tween(300)) + slideOutVertically(tween(420)) { it / 10 }
+            ) {
+                PlaybackGlassControls(
+                    backdrop = backdrop,
+                    isPlaying = isPlaying,
+                    playMode = playMode,
+                    modeLabel = playModeLabel,
+                    isFavorite = isFavorite,
+                    onPrevious = viewModel::previous,
+                    onTogglePlay = viewModel::togglePlay,
+                    onNext = viewModel::next,
+                    onToggleMode = viewModel::togglePlayMode,
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    modifier = Modifier
+                        .padding(bottom = controlsBottomPadding)
+                        .fillMaxWidth()
+                        .padding(horizontal = 28.dp),
+                    // 歌词页：控件整体微缩，给沉浸歌词让出更多空间
+                    scale = ctrlScale
+                )
+            }
         }
 
         // ── 歌词设置面板（玻璃材质）──

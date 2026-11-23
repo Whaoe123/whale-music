@@ -190,7 +190,7 @@ fun NcmSection(
                 ) {
                     Text(
                         text = if (results != null) "没有找到相关歌曲"
-                        else if (displayList === liked) "还没有红心歌曲，去网易云点 ❤ 吧"
+                        else if (displayList === liked) "还没有红心歌曲，点一下爱心就会同步到网易云"
                         else "推荐加载失败，稍后再试",
                         fontSize = 15.sp,
                         color = Color.White.copy(alpha = 0.4f)

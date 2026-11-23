@@ -79,6 +79,61 @@ class NcmLikedSync @Inject constructor(
         }
     }
 
+    /**
+     * 把一首歌的「喜欢」写回网易云，并**就地**补/删同步歌单里的那一行 ——
+     * 这样爱心立刻跟手变化，不用等下次全量同步。
+     *
+     * 只动一行是刻意的：全量 sync() 会把整张红心歌单重拉一遍，
+     * 用户每点一次爱心就拉几千首太浪费。
+     */
+    suspend fun setLiked(
+        songId: Long,
+        liked: Boolean,
+        title: String,
+        artist: String,
+        album: String,
+        coverUrl: String,
+        durationMs: Long
+    ): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (!session.hasCookies()) return@withLock false
+            val ok = runCatching { NcmApi.like(session, songId, liked) }.getOrDefault(false)
+            if (!ok) return@withLock false
+
+            val existing = dao.playlistByKind(CustomPlaylist.KIND_NCM_SYNC)
+            val pid = existing?.id ?: if (liked) {
+                dao.insertPlaylist(
+                    CustomPlaylist(
+                        name = CustomPlaylist.NCM_SYNC_NAME,
+                        coverUrl = coverUrl,
+                        kind = CustomPlaylist.KIND_NCM_SYNC,
+                        source = "netease"
+                    )
+                )
+            } else {
+                return@withLock true // 歌单都还不存在，取消就没什么可删的
+            }
+            val key = CustomPlaylistSong.extKey("ncm", songId.toString())
+            if (liked) {
+                dao.insertSong(
+                    CustomPlaylistSong(
+                        playlistId = pid,
+                        songKey = key,
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        coverUrl = coverUrl,
+                        duration = durationMs,
+                        position = 0
+                    )
+                )
+            } else {
+                dao.removeSong(pid, key)
+            }
+            true
+        }
+    }
+
     private suspend fun writeLocked(songs: List<NcmSongDto>) {
         val existing = dao.playlistByKind(CustomPlaylist.KIND_NCM_SYNC)
         val pid = existing?.id ?: dao.insertPlaylist(

@@ -733,7 +733,7 @@ private fun FavoriteEntry(count: Int, cover: String, onClick: () -> Unit) {
             Text("我喜欢的音乐", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Spacer(Modifier.height(2.dp))
             Text(
-                "$count 首 · 含网易云收藏，自动同步",
+                "$count 首",
                 fontSize = 11.sp,
                 color = Color.White.copy(alpha = 0.42f),
                 maxLines = 1,

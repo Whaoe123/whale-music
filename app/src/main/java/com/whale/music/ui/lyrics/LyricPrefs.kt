@@ -93,6 +93,10 @@ object LyricPrefs {
     private val _lyricHaptic = MutableStateFlow(true)
     val lyricHaptic: StateFlow<Boolean> = _lyricHaptic
 
+    /** 歌词页闲置 3 秒自动收起所有控件（歌名 / 进度条 / 按钮），点一下再淡回来 */
+    private val _autoHideControls = MutableStateFlow(true)
+    val autoHideControls: StateFlow<Boolean> = _autoHideControls
+
     /** 歌曲 key（"${albumId}:${id}"）→ 偏移秒数（歌词慢了往正调） */
     private val _offsets = MutableStateFlow<Map<String, Float>>(emptyMap())
     val offsets: StateFlow<Map<String, Float>> = _offsets
@@ -118,6 +122,7 @@ object LyricPrefs {
         _hideStatusBar.value = prefs.getBoolean("hide_status_bar", false)
         _immersivePage.value = prefs.getBoolean("immersive_page", true)
         _lyricHaptic.value = prefs.getBoolean("lyric_haptic", true)
+        _autoHideControls.value = prefs.getBoolean("auto_hide_controls", true)
         _offsets.value = parseOffsets(prefs.getString("offsets", "{}") ?: "{}")
     }
 
@@ -192,6 +197,11 @@ object LyricPrefs {
     fun setLyricHaptic(v: Boolean) {
         _lyricHaptic.value = v
         persist { e -> e.putBoolean("lyric_haptic", v) }
+    }
+
+    fun setAutoHideControls(v: Boolean) {
+        _autoHideControls.value = v
+        persist { e -> e.putBoolean("auto_hide_controls", v) }
     }
 
     fun songKey(albumId: Long, id: Long): String = "$albumId:$id"

@@ -39,6 +39,7 @@ class PlayerViewModel @Inject constructor(
     private val repository: MusicRepository,
     private val remoteSongDao: RemoteSongDao,
     private val likedCatalog: LikedCatalog,
+    private val likedWriter: com.whale.music.data.sync.NcmLikeWriter,
     private val ncmSession: NcmSession,
     private val remoteController: RemoteMusicController
 ) : ViewModel() {
@@ -176,12 +177,22 @@ class PlayerViewModel @Inject constructor(
     fun seekTo(fraction: Float) = playerManager.seekTo(fraction)
     fun togglePlayMode() = playerManager.togglePlayMode()
 
-    /** 爱心：本地歌写本地库；网络歌写在线收藏表（收藏后出现在音乐库列表里） */
+    /**
+     * 爱心：优先**写回网易云红心**（登录后点了就生效，不用再去网易云点）；
+     * 网易云写不了（未登录 / 搜不到这首歌）才退回本地库 / 在线收藏表。
+     */
     fun toggleFavorite() {
         val song = uiState.value.currentSong ?: return
-        // 网易云红心是只读真值源：这类歌爱心恒亮，点击不反向回写
-        if (SongKey.variants(song.title, song.artist).any { it in likedCatalog.keys.value }) return
         viewModelScope.launch {
+            val wrote = likedWriter.toggle(
+                title = song.title,
+                artist = song.artist,
+                album = song.album,
+                coverUrl = playerManager.coverUrlFor(song.id.toString()).orEmpty(),
+                durationMs = song.duration,
+                wyId = if (song.albumId == REMOTE_WY_ALBUM_ID) song.id else null
+            )
+            if (wrote != null) return@launch
             if (isRemoteSong(song)) {
                 val source = when (song.albumId) {
                     REMOTE_WY_ALBUM_ID -> "wy"
