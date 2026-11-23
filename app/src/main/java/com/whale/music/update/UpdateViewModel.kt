@@ -48,21 +48,27 @@ class UpdateViewModel @Inject constructor(
     /** 自动下载完成后，不再多问一步，直接拉起系统安装页 */
     private var autoInstallWhenReady = false
 
-    /** 启动后延迟调用一次；重复调用会被忽略 */
-    fun check() {
+    /**
+     * 检查更新。
+     *
+     * @param silent 启动时的自动检查传 true：结果不弹 Toast（"已是最新"/"连不上" 每次都弹太吵），
+     *               只有真的发现新版本才会弹更新窗；设置页手动检测仍会提示结果。
+     */
+    fun check(silent: Boolean = false) {
         if (checking) return
         checking = true
         _state.value = State.Checking
         viewModelScope.launch {
+            try {
             val info = withContext(Dispatchers.IO) { repo.fetchRemote() }
             val local = withContext(Dispatchers.IO) { repo.currentVersionCode() }
             // 消费「手动检测自动更新」标记：本次检查无论成败都用掉了，不留给下次启动
             val auto = autoUpdate
             autoUpdate = false
             if (info == null) {
-                // 检查失败：不弹窗，但告诉用户一声，避免"以为没在更新"
+                // 检查失败：不弹窗（自动检查连提示也不弹，免得每次启动吵一句）
                 _state.value = State.UpToDate
-                _note.value = "更新检查失败：连不上服务器（本机 $local）"
+                if (!silent) _note.value = "更新检查失败：连不上服务器（本机 $local）"
                 return@launch
             }
             if (repo.hasNewVersion(info)) {
@@ -74,7 +80,13 @@ class UpdateViewModel @Inject constructor(
                 }
             } else {
                 _state.value = State.UpToDate
-                _note.value = "更新检查完成：已是最新（本机 $local / 服务器 ${info.versionCode}）"
+                if (!silent) {
+                    _note.value = "更新检查完成：已是最新（本机 $local / 服务器 ${info.versionCode}）"
+                }
+            }
+            } finally {
+                // 无论成功失败都放开闸门，否则本进程内再也不会自动检查
+                checking = false
             }
         }
     }

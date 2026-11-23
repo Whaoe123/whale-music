@@ -59,6 +59,31 @@ class LyricSourceTest {
         assertEquals("真正的词", lines[0].text)
     }
 
+    @Test
+    fun `leading credit lines are stripped`() {
+        // 网易歌词开头四行制作名单（假时间戳），不该出现在歌词页
+        val lrc = """
+            [00:00.00] 作词 : 郑润泽
+            [00:01.00] 作曲 : 郑润泽
+            [00:02.00] 编曲 : 朴桑松Sunny@壹橙music
+            [00:03.00] 制作人 : 苗柏杨
+            [00:20.64]我想 说不清哪天
+            [00:24.40]你说的每句话
+        """.trimIndent()
+
+        val lines = LyricSource.parseLrc(lrc)
+
+        assertEquals(2, lines.size)
+        assertEquals("我想 说不清哪天", lines[0].text)
+    }
+
+    @Test
+    fun `a lyric line with a colon is not treated as credits`() {
+        val lines = LyricSource.parseLrc("[00:10.00]我说：别走")
+        assertEquals(1, lines.size)
+        assertEquals("我说：别走", lines[0].text)
+    }
+
     // ───────── decodeLrc（本地 .lrc 编码） ─────────
 
     @Test

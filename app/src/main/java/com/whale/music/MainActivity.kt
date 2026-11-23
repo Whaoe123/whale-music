@@ -132,7 +132,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     withFrameNanos { }
                     delay(3_500)
-                    updateVm.check()
+                    // 自动检查：静默，只有真有新版本才弹窗
+                    updateVm.check(silent = true)
                 }
                 // 检查结果（失败原因 / 版本对照）用 Toast 说一声，避免"看着像没在更新"
                 val updateToastContext = androidx.compose.ui.platform.LocalContext.current

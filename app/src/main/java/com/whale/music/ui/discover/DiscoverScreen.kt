@@ -131,7 +131,7 @@ fun DiscoverScreen(
     val ncmLogin by ncmVm.loginState.collectAsState()
     val ncmProfile by ncmVm.profile.collectAsState()
     val ncmError by ncmVm.error.collectAsState()
-    val ncmSyncMessage by ncmVm.syncMessage.collectAsState()
+
     // 0=关闭 1=登录方式菜单 2=扫码 3=网页 4=粘贴 Cookie
     var loginStage by remember { mutableStateOf(0) }
     var pasteCookie by remember { mutableStateOf("") }
@@ -166,18 +166,16 @@ fun DiscoverScreen(
             viewModel.consumeMessage()
         }
     }
-    // 登录成功 → 立即把「我喜欢的音乐」全量同步进曲库
+    // 登录成功后只刷新「我的每日推荐」（推荐口味变了）。
+    // 收藏不再拉全量：喜欢是逐首即时写回网易云的，也不需要再弹「已同步 N 首」。
+    var lastLoginState by remember { mutableStateOf(ncmLogin) }
     LaunchedEffect(ncmLogin) {
-        if (ncmLogin == com.whale.music.ncm.NcmLoginState.LOGGED_IN) {
-            ncmVm.syncLikedToLibrary()
-            viewModel.loadHome(force = true) // 切到「我的每日推荐」
+        if (ncmLogin == com.whale.music.ncm.NcmLoginState.LOGGED_IN &&
+            lastLoginState != com.whale.music.ncm.NcmLoginState.LOGGED_IN
+        ) {
+            viewModel.loadHome(force = true)
         }
-    }
-    LaunchedEffect(ncmSyncMessage) {
-        if (ncmSyncMessage != null) {
-            android.widget.Toast.makeText(context, ncmSyncMessage, android.widget.Toast.LENGTH_SHORT).show()
-            ncmVm.consumeSyncMessage()
-        }
+        lastLoginState = ncmLogin
     }
 
     // 本地在线收藏 + 网易云红心（只读点亮，按歌名+歌手归一化匹配）

@@ -564,6 +564,9 @@ fun PlayerScreen(
                     enter = fadeIn(tween(420)) + slideInVertically(tween(460)) { it / 10 },
                     exit = fadeOut(tween(300)) + slideOutVertically(tween(420)) { it / 12 }
                 ) {
+                // 注意：AnimatedVisibility 是「单子项」容器，多个子项会叠在一起画
+                // （症状：进度条压到歌名上）—— 所以这里必须显式套一层 Column
+                Column(Modifier.fillMaxWidth()) {
                 if (hiresBadgeOn && rememberHiResVisible(currentSong)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -600,6 +603,7 @@ fun PlayerScreen(
                     accent = accent,
                     compact = immersive && pagerState.currentPage == 1
                 )
+                }
                 }
             }
         }

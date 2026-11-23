@@ -75,10 +75,8 @@ class NcmViewModel @Inject constructor(
     val error: StateFlow<String?> = _error.asStateFlow()
 
     /** 收藏同步结果提示（UI 消费后置空） */
-    private val _syncMessage = MutableStateFlow<String?>(null)
-    val syncMessage: StateFlow<String?> = _syncMessage.asStateFlow()
 
-    fun consumeSyncMessage() { _syncMessage.value = null }
+
 
     /** 轮询诊断行（显示在弹窗底部，排障用） */
     private val _pollInfo = MutableStateFlow("轮询启动中…")
@@ -303,19 +301,6 @@ class NcmViewModel @Inject constructor(
         }
     }
 
-    /** 手动触发同步（曲库页 / 下拉刷新） */
-    fun syncLikedToLibrary() {
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) { likedSync.sync() }
-            _syncMessage.value = when {
-                r.ok -> "已同步 ${r.count} 首网易云收藏到曲库"
-                r.error == "throttled" -> null
-                r.error == "not_logged_in" -> "先在 Whale-网易云 登录，才能同步收藏"
-                r.error == "empty" -> "网易云「我喜欢的音乐」是空的"
-                else -> "同步失败，请检查网络后重试"
-            }
-        }
-    }
 
     // ───────── 搜索 ─────────
 

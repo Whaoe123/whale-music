@@ -311,6 +311,24 @@ object LyricSource {
     /** 原文与译文的分隔符（换行会让解析器把译文当裸行丢掉，所以用它） */
     private const val TRANSLATION_SEP = " / "
 
+    /**
+     * 歌词开头的制作人员名单关键词（后面必须跟冒号才算名单）。
+     *
+     * 网易的行级歌词前几行常年是 `[00:00.00] 作词 : xxx`，时间戳还是假的
+     * （0.0 ~ 3.0 秒），解析器会把它们当成真的歌词行，于是歌词页最上面
+     * 顶着四行"作词/作曲/编曲/制作人"。只清**开头连续**的几行，中间不动。
+     */
+    private val CREDIT_KEYWORDS = setOf(
+        "作词", "作曲", "编曲", "制作人", "监制", "出品", "录音", "混音", "母带",
+        "吉他", "贝斯", "鼓", "键盘", "弦乐", "配唱", "和声编写", "人声编辑",
+        "op", "sp", "统筹", "企划", "封面", "发行", "词", "曲"
+    )
+
+    private fun isCreditLine(text: String): Boolean {
+        val head = text.substringBefore(':').substringBefore('：').trim().lowercase()
+        return head in CREDIT_KEYWORDS
+    }
+
     /** 解析 LRC：[mm:ss.xx] 或 [mm:ss:xx] */
     fun parseLrc(lrc: String): List<LyricLine> {
         if (lrc.isBlank()) return emptyList()
@@ -334,6 +352,9 @@ object LyricSource {
                 out += LyricLine(timeMs = min * 60_000 + sec * 1_000 + ms, text = text)
             }
         }
-        return out.sortedBy { it.timeMs }
+        val sorted = out.sortedBy { it.timeMs }
+        var start = 0
+        while (start < sorted.size && isCreditLine(sorted[start].text)) start++
+        return if (start == 0) sorted else sorted.drop(start)
     }
 }
