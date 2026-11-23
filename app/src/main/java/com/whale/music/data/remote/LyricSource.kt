@@ -1,15 +1,22 @@
 package com.whale.music.data.remote
 
+import android.content.ContentResolver
+import android.content.Context
+import android.net.Uri
+import android.provider.MediaStore
 import com.whale.music.ncm.NcmHttp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 
 data class LyricLine(val timeMs: Long, val text: String)
 
 /**
- * 歌词源 — 按「歌名 + 歌手」检索网易（匿名可用），LRC 解析 + 内存缓存 + 磁盘哨兵
+ * 歌词源 — 四级：本地同名 .lrc → 磁盘哨兵 → 网易（匿名可用）→ 酷我 / lx 脚本兜底。
  * 本地歌曲、在线歌曲通用。
  *
  * 负缓存策略（Sonance 同款防限流）：
@@ -25,11 +32,19 @@ object LyricSource {
     @Volatile
     private var diskDir: java.io.File? = null
 
+    /** 查歌曲文件真实路径用（把 content:// 换成 /storage/... 才能找同目录 .lrc） */
+    @Volatile
+    private var resolver: ContentResolver? = null
+
     private const val DISK_HIT_TTL_MS = 30L * 24 * 3600_000
     private const val DISK_MISS_TTL_MS = 2L * 24 * 3600_000
 
     fun attachCacheDir(cacheRoot: java.io.File) {
         diskDir = java.io.File(cacheRoot, "lyrics")
+    }
+
+    fun attachContext(context: Context) {
+        resolver = context.applicationContext.contentResolver
     }
 
     /** 清歌词缓存（设置页「清理缓存」用） */
@@ -42,21 +57,131 @@ object LyricSource {
         }
     }
 
-    suspend fun load(title: String, artist: String): List<LyricLine> = withContext(Dispatchers.IO) {
+    /**
+     * @param audioUri 当前曲目的 content:// / file:// 地址，用于找同目录同名 .lrc
+     * @param extra    网易没词时的兜底（酷我 → lx 脚本），由调用方注入
+     */
+    suspend fun load(
+        title: String,
+        artist: String,
+        audioUri: String? = null,
+        extra: (suspend () -> String?)? = null
+    ): List<LyricLine> = withContext(Dispatchers.IO) {
         val key = "$title|$artist"
         memory[key]?.let { return@withContext it }
+        // ① 本地同名 .lrc：用户自己整理好的词，不会搜错歌，优先级最高
+        readLocalLrc(audioUri)?.let { raw ->
+            val lines = parseLrc(raw)
+            if (lines.isNotEmpty()) {
+                memory[key] = lines
+                return@withContext lines
+            }
+        }
+        // ② 磁盘哨兵（网易命中记 30 天 / 空词记 2 天）
         readDisk(key)?.let { raw ->
             return@withContext parseLrc(raw).also { memory[key] = it }
         }
-        // null = 传输失败（不缓存，下次还试）；"" = 语义空结果（写哨兵）
-        val raw = try {
+        // ③ 网易：null = 传输失败（不缓存，下次还试）；"" = 语义空结果（写哨兵）
+        val net = try {
             val sid = searchSongId("$title $artist")
             if (sid == null) "" else fetchLyric(sid)
         } catch (e: Exception) {
             null
-        } ?: return@withContext emptyList()
-        writeDisk(key, raw)
-        parseLrc(raw).also { memory[key] = it }
+        }
+        if (!net.isNullOrBlank()) {
+            writeDisk(key, net)
+            return@withContext parseLrc(net).also { memory[key] = it }
+        }
+        // ④ 兜底：酷我逐行 LRC / lx 脚本（脚本实现了 lyric 才有）
+        val fallback = try {
+            extra?.invoke()
+        } catch (e: Exception) {
+            null
+        }
+        if (!fallback.isNullOrBlank()) {
+            val lines = parseLrc(fallback)
+            if (lines.isNotEmpty()) {
+                writeDisk(key, fallback)
+                memory[key] = lines
+                return@withContext lines
+            }
+        }
+        // 只有「网易明确说没词」才写空哨兵；传输失败留着下次重试
+        if (net != null) writeDisk(key, "")
+        emptyList()
+    }
+
+    // ───────── 本地同名 .lrc ─────────
+
+    /**
+     * 歌曲文件同目录的 `.lrc`（同名 / `.mp3.lrc` / 大写扩展名都试）。
+     *
+     * 安卓 11+ 分区存储下非媒体文件（.lrc 不是音频）不能按路径直读，
+     * 所以这里只在「已授予所有文件访问」或旧系统上命中；
+     * 读不到就静默交给网易，不打扰没有 .lrc 的歌。
+     */
+    private fun readLocalLrc(audioUri: String?): String? {
+        if (audioUri.isNullOrBlank()) return null
+        val path = audioPathOf(audioUri) ?: return null
+        val f = File(path)
+        val dir = f.parentFile ?: return null
+        val base = f.name.substringBeforeLast('.', f.name)
+        for (name in listOf("$base.lrc", "$base.LRC", "${f.name}.lrc")) {
+            val file = File(dir, name)
+            if (!file.isFile) continue
+            val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+            val text = decodeLrc(bytes)
+            if (text.isNotBlank()) return text
+        }
+        return null
+    }
+
+    /** content:// → 文件系统路径（MediaStore 的 DATA 列；拿不到返回 null） */
+    private fun audioPathOf(uri: String): String? {
+        if (uri.startsWith("/")) return uri
+        if (uri.startsWith("file://")) return uri.removePrefix("file://")
+        // 在线歌（http/https）没有本地文件，直接跳过，别去查 MediaStore
+        if (!uri.startsWith("content://")) return null
+        val cr = resolver ?: return null
+        return runCatching {
+            cr.query(Uri.parse(uri), arrayOf(MediaStore.MediaColumns.DATA), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * 解本地歌词字节流：UTF-16 / UTF-8 BOM 自动识别，
+     * 非法 UTF-8 再按 GB18030 解（国内歌词站下的 .lrc 十有八九是 GBK）。
+     */
+    internal fun decodeLrc(bytes: ByteArray): String {
+        if (bytes.size >= 2) {
+            val b0 = bytes[0].toInt() and 0xFF
+            val b1 = bytes[1].toInt() and 0xFF
+            if (b0 == 0xFF && b1 == 0xFE) {
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            }
+            if (b0 == 0xFE && b1 == 0xFF) {
+                return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            }
+        }
+        var from = 0
+        if (bytes.size >= 3 &&
+            (bytes[0].toInt() and 0xFF) == 0xEF &&
+            (bytes[1].toInt() and 0xFF) == 0xBB &&
+            (bytes[2].toInt() and 0xFF) == 0xBF
+        ) {
+            from = 3
+        }
+        val body = if (from == 0) bytes else bytes.copyOfRange(from, bytes.size)
+        return try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(body))
+                .toString()
+        } catch (e: Exception) {
+            String(body, charset("GB18030"))
+        }
     }
 
     private fun fileFor(key: String): java.io.File? {

@@ -52,6 +52,23 @@ class PlayerViewModel @Inject constructor(
     fun queue(): List<com.whale.music.data.model.Song> = playerManager.queueSnapshot()
     fun playAt(index: Int) = playerManager.playAt(index)
 
+    /**
+     * 歌词兜底（歌词页在网易没词时回调）：酷我逐行 LRC → lx 脚本。
+     *
+     * 歌词页只认得「歌名 + 歌手」，这里把本地 Song 补成匹配用的 QsTrack
+     * （id 只是匹配缓存 key，本地歌直接用媒体库 id 即可）。
+     */
+    suspend fun fallbackLyric(song: Song): String? = remoteController.fallbackLyric(
+        com.whale.music.data.model.QsTrack(
+            id = song.id.toString(),
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            cover = "",
+            duration = song.duration
+        )
+    )
+
     /** 按毫秒跳进度（歌词点句跳转） */
     fun seekToMs(ms: Long) = playerManager.seekToMs(ms)
 

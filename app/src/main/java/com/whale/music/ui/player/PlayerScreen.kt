@@ -198,11 +198,16 @@ fun PlayerScreen(
     val playlistVm: com.whale.music.ui.playlist.PlaylistViewModel = hiltViewModel()
     var lyrics by remember { mutableStateOf<List<com.whale.music.data.remote.LyricLine>>(emptyList()) }
     LaunchedEffect(currentSong?.id) {
-        // 切歌：清旧歌词再取新（LyricSource 自带缓存/负缓存，直接预取）
+        // 切歌：清旧歌词再取新。顺序：本地同名 .lrc → 磁盘哨兵 → 网易 → 酷我/lx 兜底
         lyrics = emptyList()
         val song = currentSong
         if (song != null) {
-            lyrics = com.whale.music.data.remote.LyricSource.load(song.title, song.artist)
+            lyrics = com.whale.music.data.remote.LyricSource.load(
+                title = song.title,
+                artist = song.artist,
+                audioUri = song.uri,
+                extra = { viewModel.fallbackLyric(song) }
+            )
         }
     }
 

@@ -21,6 +21,16 @@ object BiliMatcher {
     /** 命中阈值：低于此分宁可不播，也不端一个别的视频上来 */
     const val ACCEPT_MIN_SCORE = 24
 
+    /**
+     * **可插队阈值**：B 站在音源顺序里排在正式音源前面，所以它一旦"认得"就会抢先出声。
+     * 只有分数达到这个线的命中才值得占用播放位；达不到就当没搜到，
+     * 让后面的酷我 / lx 接手（那些源给的通常是完整正版）。
+     *
+     * 24 分只够证明"标题里有歌名"，50 分才要求歌手或时长对上：
+     * 40（只有歌名）+ 0（没歌手没时长）过不了，40+18（时长对上）能过。
+     */
+    const val TRUST_MIN_SCORE = 50
+
     /** 标题包含歌名的基础分 */
     const val EXACT_TITLE_SCORE = 40
 
@@ -30,10 +40,25 @@ object BiliMatcher {
     /** 不是歌本身 —— 原曲没标伴奏时直接淘汰 */
     private val BAD_ACCOMPANIMENT_HARD = listOf("伴奏", "纯音乐", "instrumental")
     private val BAD_ACCOMPANIMENT_SOFT = listOf("钢琴版", "吉他版")
+
+    /**
+     * 内容根本不是这首歌：乐器演奏 / 谱子 / 音高分析 / 消音。
+     *
+     * 这些视频标题里同样带歌名和原唱，时长还和原曲几乎一样，
+     * 以前只靠分数区分不出来 —— 实测搜「瞬 郑润泽」，
+     * 排第一的 `【钢琴】我用钢琴手搓出郑润泽《瞬》的完整版这件事`
+     * 因为标题里有「完整版」拿到加分，**压过了正片**，一播就是一曲钢琴。
+     * 原曲标题本身带这些词（纯音乐碟、伴奏碟）时不淘汰。
+     */
+    private val BAD_INSTRUMENTAL = listOf(
+        "钢琴", "指弹", "鼓谱", "吉他", "尤克里里", "古筝", "小提琴", "大提琴",
+        "二胡", "琵琶", "笛子", "架子鼓", "口琴", "演奏", "手搓", "音高",
+        "翻弹", "消音", "piano", "guitar"
+    )
     private val BAD_TEACH = listOf("教学", "教程", "入门", "指法", "乐谱", "简谱", "五线谱")
     private val BAD_REMIX = listOf("remix", "dj", "蹦迪", "夜店", "电音")
     private val BAD_CLIP = listOf("铃声", "剪辑", "卡点", "15秒", "30秒", "60秒", "片段", "截取", "片段")
-    private val LIVE_WORDS = listOf("live", "现场")
+    private val LIVE_WORDS = listOf("live", "现场", "直拍", "演唱会")
 
     fun score(hit: RemoteSong, track: QsTrack): Int {
         val wt = coreTitle(track.title)
@@ -55,15 +80,26 @@ object BiliMatcher {
 
         val htLow = hit.title.lowercase()
         val wtLow = track.title.lowercase()
-        if (!hasAny(wtLow, BAD_ACCOMPANIMENT_HARD) && hasAny(htLow, BAD_ACCOMPANIMENT_HARD)) return -1
+        // 版本按语义组比对：B 站标题里「现场 / Live / 演唱会」写法五花八门，
+        // 按字面判会把同版本的投稿当杂质扣分（原曲本来就是 live 时尤其明显）
+        val trackVersion = SongMatcher.versionTag(track.title)
+        val hitVersion = SongMatcher.versionTag(hit.title)
+        val sameVersion = trackVersion != null && trackVersion == hitVersion
+        if (!sameVersion && hasAny(htLow, BAD_ACCOMPANIMENT_HARD)) return -1
         if (hasAny(htLow, BAD_TEACH)) return -1
-        if (!hasAny(wtLow, BAD_ACCOMPANIMENT_SOFT) && hasAny(htLow, BAD_ACCOMPANIMENT_SOFT)) s -= 22
-        if (!hasAny(wtLow, BAD_REMIX) && hasAny(htLow, BAD_REMIX)) s -= 12
+        if (hasAny(htLow, BAD_INSTRUMENTAL) && !hasAny(wtLow, BAD_INSTRUMENTAL)) return -1
+        if (!sameVersion) {
+            if (!hasAny(wtLow, BAD_ACCOMPANIMENT_SOFT) && hasAny(htLow, BAD_ACCOMPANIMENT_SOFT)) s -= 22
+            if (!hasAny(wtLow, BAD_REMIX) && hasAny(htLow, BAD_REMIX)) s -= 12
+            if (!hasAny(wtLow, LIVE_WORDS) && hasAny(htLow, LIVE_WORDS)) s -= 6
+        } else {
+            s += 8
+        }
         if (hasAny(htLow, BAD_CLIP)) s -= 16
-        if (!hasAny(wtLow, LIVE_WORDS) && hasAny(htLow, LIVE_WORDS)) s -= 6
 
-        // 官方 MV / 完整版更可能是想要的那个版本
-        if (hasAny(htLow, listOf("官方", "mv", "完整版"))) s += 4
+        // 只认「官方」这种强信号。以前把「完整版 / MV」也算加分，
+        // 结果「【钢琴】…手搓出《瞬》的完整版这件事」反而压过正片
+        if (hasAny(htLow, listOf("官方", "official"))) s += 4
 
         // 时长软加分：B 站视频常带片头片尾，放宽到 30s
         if (track.duration > 0 && hit.duration > 0) {

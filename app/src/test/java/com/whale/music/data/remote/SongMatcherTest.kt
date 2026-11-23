@@ -19,17 +19,19 @@ class SongMatcherTest {
         title: String,
         artist: String = "",
         duration: Long = 0L,
-        id: String = "t1"
-    ) = QsTrack(id = id, title = title, artist = artist, album = "", cover = "", duration = duration)
+        id: String = "t1",
+        album: String = ""
+    ) = QsTrack(id = id, title = title, artist = artist, album = album, cover = "", duration = duration)
 
     private fun hit(
         title: String,
         artist: String = "",
         duration: Long = 0L,
-        rid: Long = 1L
+        rid: Long = 1L,
+        album: String = ""
     ) = RemoteSong(
         songId = "kw_$rid", source = "kw", rid = rid,
-        title = title, artist = artist, album = "", coverUrl = "", duration = duration
+        title = title, artist = artist, album = album, coverUrl = "", duration = duration
     )
 
     // ───────── ① 歌手硬门 ─────────
@@ -201,13 +203,20 @@ class SongMatcherTest {
     }
 
     @Test
-    fun `instrumental tag is heavily penalized`() {
-        val s = SongMatcher.score(
+    fun `instrumental candidate is rejected unless the track is instrumental`() {
+        // 伴奏是「同名的另一条音轨」：分数再高也不该端上来
+        val rejected = SongMatcher.score(
             hit(title = "晴天 伴奏", artist = "周杰伦", duration = 269_000),
             track(title = "晴天", artist = "周杰伦", duration = 269_000)
         )
-        // 20(规范化后包含原名) - 24 + 26 + 22
-        assertEquals(44, s)
+        assertEquals(-1, rejected)
+
+        // 原曲本身就是伴奏（纯音乐碟）时照常匹配
+        val accepted = SongMatcher.score(
+            hit(title = "晴天 伴奏", artist = "周杰伦", duration = 269_000),
+            track(title = "晴天 伴奏", artist = "周杰伦", duration = 269_000)
+        )
+        assertTrue(accepted >= SongMatcher.ACCEPT_MIN_SCORE)
     }
 
     @Test
@@ -237,6 +246,101 @@ class SongMatcherTest {
         )
         // 20(规范化后包含原名) - 8 + 26 + 22
         assertEquals(60, s)
+    }
+
+    @Test
+    fun `same version written differently still matches`() {
+        // 本地标签 `(live)`、线上曲库写「演唱会现场版」：语义同组，不能互相误杀
+        val s = SongMatcher.score(
+            hit(title = "味道 演唱会现场版", artist = "辛晓琪", duration = 241_000),
+            track(title = "味道 (live)", artist = "辛晓琪", duration = 240_000)
+        )
+        assertTrue(s >= SongMatcher.ACCEPT_MIN_SCORE)
+
+        // 同组有加分，单边带 live 是扣分，所以前者必须更高
+        val oneSided = SongMatcher.score(
+            hit(title = "味道 演唱会现场版", artist = "辛晓琪", duration = 241_000),
+            track(title = "味道", artist = "辛晓琪", duration = 240_000)
+        )
+        assertTrue(s > oneSided)
+    }
+
+    @Test
+    fun `live track prefers the live candidate over the studio one`() {
+        val live = SongMatcher.score(
+            hit(title = "味道 (现场版)", artist = "辛晓琪", duration = 240_000),
+            track(title = "味道 (live)", artist = "辛晓琪", duration = 240_000)
+        )
+        val studio = SongMatcher.score(
+            hit(title = "味道", artist = "辛晓琪", duration = 240_000),
+            track(title = "味道 (live)", artist = "辛晓琪", duration = 240_000)
+        )
+        assertTrue(live > studio)
+    }
+
+    @Test
+    fun `versionTag groups aliases and ignores english substrings`() {
+        assertEquals("live", SongMatcher.versionTag("味道 演唱会现场版"))
+        assertEquals("live", SongMatcher.versionTag("味道 (Live)"))
+        assertEquals("instrumental", SongMatcher.versionTag("晴天 伴奏"))
+        assertEquals("cover", SongMatcher.versionTag("晴天 翻唱"))
+        // Deliverance 里的 live 不是版本词
+        assertNull(SongMatcher.versionTag("Deliverance"))
+        assertNull(SongMatcher.versionTag("晴天"))
+    }
+
+    // ───────── ④-b 专辑佐证 ─────────
+
+    @Test
+    fun `same album adds corroboration`() {
+        val withAlbum = SongMatcher.score(
+            hit(title = "晴天", artist = "周杰伦", duration = 269_000, album = "叶惠美"),
+            track(title = "晴天", artist = "周杰伦", duration = 269_000, album = "叶惠美")
+        )
+        val without = SongMatcher.score(
+            hit(title = "晴天", artist = "周杰伦", duration = 269_000),
+            track(title = "晴天", artist = "周杰伦", duration = 269_000)
+        )
+        assertEquals(10, withAlbum - without)
+    }
+
+    @Test
+    fun `album edition suffix is stripped before comparing`() {
+        val s = SongMatcher.score(
+            hit(title = "晴天", artist = "周杰伦", duration = 269_000, album = "叶惠美 豪华版"),
+            track(title = "晴天", artist = "周杰伦", duration = 269_000, album = "叶惠美")
+        )
+        assertEquals(10, SongMatcher.albumScore("叶惠美 豪华版", "叶惠美"))
+        assertTrue(s > SongMatcher.ACCEPT_MIN_SCORE)
+    }
+
+    @Test
+    fun `english suffix needs a word boundary`() {
+        // Alive 不能被当成 live 剥掉
+        assertEquals("alive", SongMatcher.normalizeAlbum("Alive"))
+        assertEquals("greatesthits", SongMatcher.normalizeAlbum("Greatest Hits"))
+    }
+
+    @Test
+    fun `placeholder album adds nothing`() {
+        assertEquals(0, SongMatcher.albumScore("哔哩哔哩", "未知专辑"))
+        assertEquals(0, SongMatcher.albumScore("", "叶惠美"))
+    }
+
+    // ───────── ④-c 音轨号 ─────────
+
+    @Test
+    fun `leading track number is ignored`() {
+        assertEquals("晴天", SongMatcher.normalizeTitle("01. 晴天"))
+        assertEquals("晴天", SongMatcher.normalizeTitle("01 晴天"))
+        assertEquals("晴天", SongMatcher.normalizeTitle("07-晴天"))
+    }
+
+    @Test
+    fun `numbered song titles keep their digits`() {
+        // 「7 Rings」「24K Magic」不能被当成音轨号削掉
+        assertEquals("7rings", SongMatcher.normalizeTitle("7 Rings"))
+        assertEquals("24kmagic", SongMatcher.normalizeTitle("24K Magic"))
     }
 
     // ───────── ⑤ pickBest 选优与阈值 ─────────

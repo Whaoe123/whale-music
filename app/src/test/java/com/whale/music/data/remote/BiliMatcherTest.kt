@@ -91,6 +91,51 @@ class BiliMatcherTest {
     }
 
     @Test
+    fun `乐器演奏视频直接淘汰 - 不然会播成钢琴曲`() {
+        // 真实案例：郑润泽《瞬》在 B 站被「钢琴手搓完整版」顶到第一，一播就是钢琴曲
+        val t = track(title = "瞬", artist = "郑润泽", durationMs = 284_000)
+        listOf(
+            "【钢琴】我用钢琴手搓出郑润泽《瞬》的完整版这件事",
+            "瞬【郑润泽】动态鼓谱",
+            "【吉他指弹】瞬（郑润泽）",
+            "《瞬》郑润泽 完整音高测量"
+        ).forEach { title ->
+            assertEquals("应淘汰：$title", -1, BiliMatcher.score(hit(title, "某UP主", 285_000), t))
+        }
+    }
+
+    @Test
+    fun `正片压过带完整版字样的二传`() {
+        val t = track(title = "瞬", artist = "郑润泽", durationMs = 284_000)
+        val real = BiliMatcher.score(
+            hit("【𝐇𝐢-𝐑𝐞𝐬无损音质】｜《瞬》- 郑润泽", "VV音乐局", 285_000), t
+        )
+        val piano = BiliMatcher.score(
+            hit("【钢琴】我用钢琴手搓出《瞬》的完整版这件事", "发财钢琴猪猪", 285_000), t
+        )
+        assertTrue("real=$real", real >= BiliMatcher.ACCEPT_MIN_SCORE)
+        assertTrue("real=$real piano=$piano", real > piano)
+    }
+
+    @Test
+    fun `原曲本身就是钢琴曲 - 不淘汰钢琴视频`() {
+        val t = track(title = "瞬 钢琴版", artist = "郑润泽", durationMs = 284_000)
+        val s = BiliMatcher.score(hit("瞬 钢琴版 郑润泽", "某UP主", 285_000), t)
+        assertTrue("score=$s", s >= BiliMatcher.ACCEPT_MIN_SCORE)
+    }
+
+    @Test
+    fun `低于可信阈值不当命中 - 让正式音源接手`() {
+        // 只有歌名对上、歌手和时长都没有：40 - 6 = 34，够不上插队线
+        val weak = BiliMatcher.score(hit("紫荆花盛开 完整版", "路人UP", 0), track(durationMs = 0))
+        assertTrue("weak=$weak", weak < BiliMatcher.TRUST_MIN_SCORE)
+        // 歌名 + 时长对上（翻唱没提原唱）：40 - 6 + 18 = 52，可以插队
+        val cover = BiliMatcher.score(hit("【紫荆花盛开】超好听翻唱", "路人UP", 209_000), track())
+        assertTrue("cover=$cover", cover >= BiliMatcher.TRUST_MIN_SCORE)
+        assertTrue(BiliMatcher.TRUST_MIN_SCORE > BiliMatcher.ACCEPT_MIN_SCORE)
+    }
+
+    @Test
     fun `空歌名不匹配任何候选`() {
         assertEquals(-1, BiliMatcher.score(hit("任意视频"), track(title = "  ")))
     }

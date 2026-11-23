@@ -149,6 +149,18 @@ class RemoteMusicController @Inject constructor(
     }
 
     /**
+     * 歌词兜底（网易搜不到 / 没词时由歌词页回调进来）：先酷我，再 lx 脚本。
+     *
+     * 顺序理由：酷我一次请求就返回逐行带时间轴的 LRC，命中率高、成本低；
+     * lx 脚本要先搜一遍再调 `lyric`，而且只在该脚本实现了 lyric 时才有结果，
+     * 属于「脚本档次决定」的最后一级。两边都空就返回 null，歌词页照常显示无词。
+     */
+    suspend fun fallbackLyric(track: QsTrack): String? = withContext(Dispatchers.IO) {
+        matchKw(track)?.rid?.let { KwSource.lyric(it) }?.takeIf { it.isNotBlank() }
+            ?: lxManager.matchLx(track)?.let { lxManager.lyric(it) }?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * 网易取流（带 10 分钟负缓存）：
      * 拿过一次「网易不给链接」的 rid 在 TTL 内直接返回 null，
      * 批量播放时 VIP / 无版权曲不会每批都白打一轮网易接口。
@@ -598,11 +610,12 @@ class RemoteMusicController @Inject constructor(
                     best = h
                 }
             }
-            // 已经够高了就不用再降级检索
-            if (bestScore >= BiliMatcher.EXACT_TITLE_SCORE) break
+            // 已经能插队了就不用再降级检索
+            if (bestScore >= BiliMatcher.TRUST_MIN_SCORE) break
         }
 
-        val result = best?.takeIf { bestScore >= BiliMatcher.ACCEPT_MIN_SCORE }
+        // 只接受"可信"的命中：B 站排在正式音源前面，宁可不播也别抢先播错
+        val result = best?.takeIf { bestScore >= BiliMatcher.TRUST_MIN_SCORE }
         if (result != null) biliMatchCache[track.id] = result else biliMissCache += track.id
         return result
     }

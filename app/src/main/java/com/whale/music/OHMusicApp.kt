@@ -17,8 +17,9 @@ class OHMusicApp : Application() {
         super.onCreate()
         CrashGuard.init(this)
         CoverResolver.init(this)
-        // 歌词磁盘哨兵缓存（防重复打网易接口）
+        // 歌词磁盘哨兵缓存（防重复打网易接口）+ 找同目录 .lrc 用的 resolver
         LyricSource.attachCacheDir(cacheDir)
+        LyricSource.attachContext(this)
         // 展示偏好（Hi·Res 金标开关 / 大小）
         DisplayPrefs.init(this)
         // 液态玻璃全局配方（折射 / 厚度 / 色散 / 模糊 / 高光）

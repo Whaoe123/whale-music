@@ -13,6 +13,7 @@ import java.net.URLEncoder
  * - 搜索:   https://www.kuwo.cn/search/searchMusicBykeyWord （匿名可用）
  * - 推荐:   http://wapi.kuwo.cn/openapi/v1/recommend/tab/top （匿名可用）
  * - 取直链: https://changenotice.kuwo.cn/mobi.s?type=convert_url_with_sign （匿名可用，320kmp3/2000kflac）
+ * - 歌词:   https://m.kuwo.cn/newh5/singles/songinfoandlrc （匿名可用，逐行带时间轴）
  */
 object KwSource {
 
@@ -150,5 +151,53 @@ object KwSource {
         } catch (e: Exception) {
             null
         }
+    }
+
+    // ───────── 歌词 ─────────
+
+    /** rid → LRC 原文；空串表示「酷我也没词」，避免同一首反复打接口 */
+    private val lyricCache = android.util.LruCache<Long, String>(64)
+
+    /**
+     * 取歌词（m.kuwo.cn 公开接口，匿名可用）。
+     *
+     * 接口给的是 `data.lrclist[{time: 秒, lineLyric}]`，这里转成标准
+     * `[mm:ss.xx]正文`，统一交给 [LyricSource.parseLrc] 解析，
+     * 免得歌词解析出现两套时间轴。
+     *
+     * 返回 null = 请求失败（下次还能再试）；"" = 酷我确实没有这首的词。
+     */
+    fun lyric(rid: Long): String? {
+        lyricCache.get(rid)?.let { return it }
+        val raw = try {
+            httpGet("https://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=$rid", "https://m.kuwo.cn/")
+        } catch (e: Exception) {
+            return null
+        }
+        val list = runCatching {
+            JSONObject(raw).optJSONObject("data")?.optJSONArray("lrclist")
+        }.getOrNull()
+        if (list == null || list.length() == 0) {
+            lyricCache.put(rid, "")
+            return ""
+        }
+        val sb = StringBuilder(list.length() * 24)
+        for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            val sec = o.optDouble("time", -1.0)
+            if (sec < 0) continue
+            val text = o.optString("lineLyric").trim()
+            if (text.isEmpty()) continue
+            val total = (sec * 1000).toLong()
+            sb.append(
+                String.format(
+                    java.util.Locale.ROOT, "[%02d:%02d.%02d]",
+                    total / 60_000, (total % 60_000) / 1_000, (total % 1_000) / 10
+                )
+            ).append(text).append('\n')
+        }
+        val lrc = sb.toString().trimEnd()
+        lyricCache.put(rid, lrc)
+        return lrc
     }
 }

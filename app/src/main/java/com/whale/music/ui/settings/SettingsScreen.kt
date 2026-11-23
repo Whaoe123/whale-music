@@ -103,6 +103,7 @@ fun SettingsScreen(
     var secAbout by rememberSaveable { mutableStateOf(false) }
     // 播放音源多选（默认四个全开，顺序固定：网易云 → B站 → 酷我 → lx）
     var secSource by rememberSaveable { mutableStateOf(false) }
+    var secLyric by rememberSaveable { mutableStateOf(false) }
     val sourceEnabled by viewModel.sourceEnabled.collectAsState()
     // 液态玻璃（GlassPrefs：折射 / 厚度 / 色散 / 模糊 / 高光，全局玻璃控件实时生效）
     val glassRefraction by com.whale.music.util.GlassPrefs.refraction.collectAsState()
@@ -268,6 +269,46 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+
+        // ───────── 本地歌词（歌曲同目录的同名 .lrc） ─────────
+        SettingsCard(
+            title = "本地歌词",
+            expanded = secLyric,
+            onToggle = { secLyric = !secLyric }
+        ) {
+            val allFiles = rememberAllFilesAccess()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !allFiles) { openAllFilesSettings(context) }
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("读取同名 .lrc", color = Color.White, fontSize = 15.sp)
+                    Text(
+                        if (allFiles) "已开启：同目录的 .lrc 优先于联网歌词"
+                        else "需要「所有文件访问」权限，点这里去开",
+                        color = Color.White.copy(alpha = 0.45f),
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (allFiles) "已开启" else "去授权",
+                    color = if (allFiles) Color(0xFF4ADE80) else Color(0xFF60A5FA),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                ".lrc 要和歌曲文件同名、放在同一个文件夹（UTF-8 / GBK 都能读）。" +
+                    "读不到就自动回落网易 → 酷我 → lx 脚本，不影响播放。",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
         }
 
         // ───────── 封面金标（Hi·Res 徽章开关 + 大小） ─────────
@@ -838,4 +879,46 @@ private fun GlassSliderRow(
             inactiveTrackColor = Color.White.copy(alpha = 0.15f)
         )
     )
+}
+
+// ───────── 「所有文件访问」权限（读同目录 .lrc 用） ─────────
+
+private fun hasAllFilesAccess(): Boolean =
+    android.os.Build.VERSION.SDK_INT < 30 ||
+        android.os.Environment.isExternalStorageManager()
+
+/**
+ * 权限状态：没授予时每秒静悄悄看一次，
+ * 用户在系统设置里开完返回，这里立刻变「已开启」，不用重进页面。
+ */
+@Composable
+private fun rememberAllFilesAccess(): Boolean {
+    var granted by remember { mutableStateOf(hasAllFilesAccess()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (!granted) {
+            kotlinx.coroutines.delay(1_000)
+            if (hasAllFilesAccess()) granted = true
+        }
+    }
+    return granted
+}
+
+private fun openAllFilesSettings(context: android.content.Context) {
+    if (android.os.Build.VERSION.SDK_INT < 30) return
+    val page = android.content.Intent(
+        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+        android.net.Uri.parse("package:${context.packageName}")
+    )
+    val ok = runCatching { context.startActivity(page) }.isSuccess
+    if (ok) return
+    // 少数设备（部分定制 ROM）没有应用级页面，退回列表页
+    runCatching {
+        context.startActivity(
+            android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        )
+    }.onFailure {
+        android.widget.Toast
+            .makeText(context, "系统里没有这个设置页，请手动在设置中搜「所有文件」", android.widget.Toast.LENGTH_LONG)
+            .show()
+    }
 }
