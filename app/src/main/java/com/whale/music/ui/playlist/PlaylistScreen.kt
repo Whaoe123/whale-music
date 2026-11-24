@@ -101,6 +101,7 @@ fun PlaylistScreen(
     val openedId by viewModel.openedId.collectAsState()
     val openedSongs by viewModel.openedSongs.collectAsState()
     val opened = customPlaylists.firstOrNull { it.id == openedId }
+    val downloadingKey by viewModel.downloadingKey.collectAsState()
 
     // 详情页：我喜欢的音乐 / 本地音乐
     var showFavorites by remember { mutableStateOf(false) }
@@ -218,7 +219,9 @@ fun PlaylistScreen(
                         onRename = {
                             renameTarget = opened
                             renameText = opened.name
-                        }
+                        },
+                        onDownload = viewModel::downloadSong,
+                        downloadingKey = downloadingKey
                     )
                     return@Column
                 }
@@ -237,7 +240,9 @@ fun PlaylistScreen(
                         onRename = {},
                         menuEnabled = false,
                         removePrompt = "取消喜欢",
-                        extraAction = "全部放进歌单" to { pickForFavorites = true }
+                        extraAction = "全部放进歌单" to { pickForFavorites = true },
+                        onDownload = viewModel::downloadSong,
+                        downloadingKey = downloadingKey
                     )
                     return@Column
                 }

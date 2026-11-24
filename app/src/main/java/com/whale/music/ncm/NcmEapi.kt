@@ -354,8 +354,10 @@ object NcmEapi {
      * 「size × 8 ÷ br」估出来的时长、以及 `freeTrialPrivilege` 权益位。
      */
     private fun parseItem(item: JSONObject, expectedDurationMs: Long): NcmStream? {
+        // 网易在无版权/未登录时会下发 "url": null，org.json 的 optString 会把它
+        // 变成字符串 "null"，不校验就会被当成有效地址（下载报 no protocol: null）
         val url = item.optString("url").orEmpty()
-        if (url.isBlank()) return null
+        if (!url.startsWith("http")) return null
 
         val br = item.optInt("br", 0)
         val sizeBytes = item.optLong("size", 0L)

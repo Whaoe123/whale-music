@@ -286,16 +286,19 @@ fun PlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            // 任何触摸（点击/滑动/长按）都先让控件出现；200ms 内不重复触发，避免拖动时狂重组
+            // 手指抬起后才让控件回来：控件显隐会让歌词区变高变矮，
+            // 在手指按着的时候重排会把这一次点击/拖动吃掉（以前要连点两下才生效）
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     var last = 0L
                     while (true) {
-                        awaitPointerEvent(PointerEventPass.Initial)
-                        val now = System.currentTimeMillis()
-                        if (now - last > 200) {
-                            last = now
-                            lastTouchAt = now
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.all { !it.pressed }) {
+                            val now = System.currentTimeMillis()
+                            if (now - last > 200) {
+                                last = now
+                                lastTouchAt = now
+                            }
                         }
                     }
                 }
@@ -483,6 +486,7 @@ fun PlayerScreen(
                                 accent = accent,
                                 bgProfile = bgProfile,
                                 bgBackdrop = bgBackdrop,
+                                tapToSeek = chromeShown,
                                 onSeek = viewModel::seekToMs
                             )
                         }
@@ -545,6 +549,8 @@ fun PlayerScreen(
                         bgProfile = bgProfile,
                         bgBackdrop = bgBackdrop,
                         showGlass = !immersive,
+                        // 控件藏起来时，点一下只唤醒控件，不把歌跳到点中的那句
+                        tapToSeek = chromeShown,
                         onSeek = viewModel::seekToMs
                     )
 

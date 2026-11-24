@@ -7,9 +7,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -137,6 +138,8 @@ fun StageLyrics(
     scrollHaptic: Boolean,
     /** 沉浸歌词页开关：false = 经典布局（原字号/边距/时间戳/无景深） */
     immersive: Boolean = true,
+    /** 控件隐藏（闲置）时点击只负责唤醒控件，不跳歌词 —— 防止误触把歌切走 */
+    tapToSeek: Boolean = true,
     onSeek: (Long) -> Unit
 ) {
     if (lines.isEmpty()) return
@@ -323,9 +326,78 @@ fun StageLyrics(
                 LyricStyle.FLUID -> FluidWaveDecoration(accent, motion, unit)
                 else -> Unit
             }
+            // 手势检测器锚在 Unit 上、几何值走 rememberUpdatedState：
+            // 控件显隐会重新测量舞台，旧写法 (centers, style) 作 key 会重启检测器，
+            // 正在进行的第一次点击/拖动被吞掉（症状：第一下只唤醒了控件）。
+            val centersRef = rememberUpdatedState(centers)
+            val styleRef = rememberUpdatedState(style)
+            val onSeekRef = rememberUpdatedState(onSeek)
+            val offsetRef = rememberUpdatedState(offsetMs)
+            val linesRef = rememberUpdatedState(lines)
+            val stageHeightRef = rememberUpdatedState(h)
+            val stageUnitRef = rememberUpdatedState(unit)
+            val heightsRef = rememberUpdatedState(heights)
+            val tapEnabledRef = rememberUpdatedState(tapToSeek)
+            val tapPadPx = with(localDensity) { 12.dp.toPx() }
+            // 单击命中：按各样式真实的 pose.y 逐行算屏幕位置，取离手指最近的那句。
+            // 不依赖每行自己的 clickable，几乎透明的远行也能点中；SPATIAL 那种
+            // 未来句在上方的反向排布也能命中。
+            // 几何全部取「按下那一刻」的值：控件显隐会让歌词区在抬手前就开始变高变矮。
+            val tapSeek = rememberUpdatedState<(Float, Float, Float, Float) -> Unit>(
+                { y, stageHeightPx, anchorStage, aDown ->
+                    val cs = centersRef.value
+                    if (cs.size >= 2) {
+                        val st = styleRef.value
+                        val baseFraction = if (st == LyricStyle.FLUID) 0.44f else 0.5f
+                        val unitPx = stageUnitRef.value
+                        val lo = maxOf(0, floor(aDown).toInt() - 4)
+                        val hi = minOf(cs.lastIndex, ceil(aDown).toInt() + 4)
+                        var best = round(aDown).toInt().coerceIn(0, cs.lastIndex)
+                        var bestDist = Float.MAX_VALUE
+                        for (i in lo..hi) {
+                            val pose = lyricStagePose(
+                                st, i - aDown, cs[i] - anchorStage, unitPx, i, immersive
+                            )
+                            val d = abs(stageHeightPx * baseFraction + pose.y - y)
+                            if (d < bestDist) {
+                                bestDist = d
+                                best = i
+                            }
+                        }
+                        // 只认真正落在某句歌词上的点击：空白处的误触不算
+                        val hitSlop = (heightsRef.value.getOrNull(best) ?: 0f) * 0.5f + tapPadPx
+                        if (bestDist <= hitSlop) {
+                            onSeekRef.value(
+                                (linesRef.value[best].timeMs - offsetRef.value).coerceAtLeast(0L)
+                            )
+                            settleTo(best.toFloat())
+                        }
+                    }
+                }
+            )
             Box(
-                Modifier.fillMaxSize().pointerInput(centers, style) {
-                    if (centers.size < 2) return@pointerInput
+                Modifier.fillMaxSize()
+                    // ① 单击：立刻跳到点中的那句（和「唤醒控件」是同一次触摸，不用点两下）
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            // 沉浸闲置（控件不在）时，这一下只用来唤醒控件：不跳歌词。
+                            // 想看控件后再点歌词 / 直接上下滑，才真正换句。
+                            val seekAllowed = tapEnabledRef.value
+                            // 按下瞬间定格几何，抬手前控件显隐改变布局也不会算歪
+                            val aDown = stage.floatValue
+                            val downAnchor = lyricStageAnchor(centersRef.value, aDown)
+                            val downHeight = stageHeightRef.value
+                            // 拖动一旦越过触摸阈值会被 ② 消费掉 → 这里拿到 null，不会误当成点击
+                            val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+                            up.consume()
+                            if (seekAllowed) {
+                                tapSeek.value(down.position.y, downHeight, downAnchor, aDown)
+                            }
+                        }
+                    }
+                    // ② 上下拖动翻看歌词
+                    .pointerInput(Unit) {
                     val tracker = VelocityTracker()
                     detectVerticalDragGestures(
                         onDragStart = {
@@ -344,23 +416,27 @@ fun StageLyrics(
                             lastTouch[0] = android.os.SystemClock.uptimeMillis()
                             val velocity = tracker.calculateVelocity().y
                             if (abs(velocity) > FLING_MIN_VELOCITY) {
+                                val cs = centersRef.value
+                                val st = styleRef.value
                                 // SPATIAL 的未来句在上方，方向相反
-                                val travel = if (style == LyricStyle.SPATIAL) {
+                                val travel = if (st == LyricStyle.SPATIAL) {
                                     velocity * FLING_SECONDS
                                 } else {
                                     -velocity * FLING_SECONDS
                                 }
-                                val base = lyricStageAnchor(centers, stage.floatValue)
-                                settleTo(lyricIndexAtCenter(centers, base + travel))
+                                val base = lyricStageAnchor(cs, stage.floatValue)
+                                settleTo(lyricIndexAtCenter(cs, base + travel))
                             }
                             scheduleReturn()
                         }
                     ) { change, dragAmount ->
                         change.consume()
-                        val base = lyricStageAnchor(centers, stage.floatValue)
-                        val delta = if (style == LyricStyle.SPATIAL) dragAmount else -dragAmount
-                        val next = (base + delta).coerceIn(centers.first(), centers.last())
-                        val snapped = lyricIndexAtCenter(centers, next)
+                        val cs = centersRef.value
+                        if (cs.size < 2) return@detectVerticalDragGestures
+                        val base = lyricStageAnchor(cs, stage.floatValue)
+                        val delta = if (styleRef.value == LyricStyle.SPATIAL) dragAmount else -dragAmount
+                        val next = (base + delta).coerceIn(cs.first(), cs.last())
+                        val snapped = lyricIndexAtCenter(cs, next)
                         val lineBefore = round(stage.floatValue).toInt()
                         stage.floatValue = snapped
                         // 每跨一行轻震：拖动像走过一格格齿槽（自动跟随不震）
@@ -407,15 +483,8 @@ fun StageLyrics(
                                 }
                                 .then(if (pose.blur > 0.5f) Modifier.blur(blurDp) else Modifier)
                                 .zIndex(emphasis + 2f)
-                                .then(
-                                    if (pose.opacity > 0.05f) Modifier.clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null
-                                    ) {
-                                        onSeek((line.timeMs - offsetMs).coerceAtLeast(0L))
-                                        settleTo(index.toFloat())
-                                    } else Modifier
-                                )
+                                // 点击跳转统一由舞台级 tapSeek 处理（这里不再挂 clickable，
+                                // 否则第一次点击会被这里的按压手势和控件显隐一起吞掉）
                                 .padding(vertical = 4.dp)
                         ) {
                             // 沉浸歌词不显示行首时间戳（经典布局保留；黑胶用内联时间轴）

@@ -535,7 +535,7 @@ object NcmApi {
             for (i in 0 until data.length()) {
                 val item = data.optJSONObject(i) ?: continue
                 val url = item.optString("url")
-                if (url.isEmpty()) continue
+                if (!url.startsWith("http")) continue
                 // VIP 歌匿名态会返回 30 秒试听片段（freeTrialInfo 非空）。
                 // 试听没用，跳过让上层按「歌名+歌手」转酷我拿完整版。
                 val trial = item.optJSONObject("freeTrialInfo")

@@ -54,6 +54,8 @@ fun LyricsPage(
     bgBackdrop: Backdrop,
     /** false 时由外层铺满整屏玻璃（竖屏歌词页），此处不再画卡片玻璃 */
     showGlass: Boolean = true,
+    /** 没有控件（沉浸闲置）时点击只唤醒控件，不跳转 —— 防止误触跳歌词 */
+    tapToSeek: Boolean = true,
     onSeek: (Long) -> Unit
 ) {
     val style by LyricPrefs.style.collectAsState()
@@ -102,6 +104,7 @@ fun LyricsPage(
                     accent = accent,
                     offsetMs = offsetMs,
                     scrollHaptic = haptic,
+                    tapToSeek = tapToSeek,
                     onSeek = onSeek
                 )
                 else -> StageLyrics(
@@ -117,6 +120,7 @@ fun LyricsPage(
                     offsetMs = offsetMs,
                     scrollHaptic = haptic,
                     immersive = immersive,
+                    tapToSeek = tapToSeek,
                     onSeek = onSeek
                 )
             }

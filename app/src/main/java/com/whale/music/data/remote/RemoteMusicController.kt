@@ -50,6 +50,7 @@ class RemoteMusicController @Inject constructor(
     /** URL 缓存：同一首歌重复点击秒开 */
     private val urlCache = ConcurrentHashMap<String, String>()
 
+
     /** 汽水 → 酷我 的匹配缓存，key 是汽水 trackId */
     private val kwMatchCache = ConcurrentHashMap<String, RemoteSong>()
     private val kwMissCache = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -635,6 +636,11 @@ class RemoteMusicController @Inject constructor(
 
         /** 网易取流负缓存 TTL：同一首 10 分钟内不再打网易 */
         private const val WY_MISS_TTL_MS = 10 * 60_000L
+
+        /** B 站 CDN 只认桌面 Chrome UA；用手机 UA 会直接 403（下载也用这份） */
+        private const val DESKTOP_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     private fun coversOf(s: RemoteSong): Map<String, String> =
@@ -656,10 +662,12 @@ class RemoteMusicController @Inject constructor(
                     session.qualityLevel() ?: NcmEapi.autoLevel(session.isVip()),
                     song.duration
                 )
-            }.getOrNull()
+            }.getOrNull()?.takeIf { !it.trial }
         } else null
         val url = direct?.url?.replaceFirst("http://", "https://")
             ?: (resolveUrl(song) ?: return@withContext "拿不到下载链接")
+        // 兜底：任何非 http(s) 的地址都不拿来下载（曾经出现过字符串 "null"）
+        if (!url.startsWith("http")) return@withContext "拿不到下载链接"
         val ext = when {
             (direct?.type ?: "").contains("flac", ignoreCase = true) ||
                 url.contains("flac", ignoreCase = true) -> "flac"
@@ -690,7 +698,16 @@ class RemoteMusicController @Inject constructor(
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 15_000
                 readTimeout = 30_000
-                setRequestProperty("User-Agent", "okhttp/4.9")
+                instanceFollowRedirects = true
+                // B 站 CDN（bilivideo）校验请求头：桌面 UA + Referer，否则一律 403
+                // （403 时 HttpURLConnection 抛的 FileNotFoundException 消息就是 URL）
+                val host = runCatching { URL(url).host }.getOrNull().orEmpty()
+                if (host.contains("bilibili") || host.contains("bilivideo")) {
+                    setRequestProperty("User-Agent", DESKTOP_UA)
+                    setRequestProperty("Referer", "https://www.bilibili.com/")
+                } else {
+                    setRequestProperty("User-Agent", "okhttp/4.9")
+                }
             }
             conn.inputStream.use { input ->
                 resolver.openOutputStream(target)?.use { out ->
@@ -713,7 +730,13 @@ class RemoteMusicController @Inject constructor(
             null
         } catch (e: Exception) {
             resolver.delete(target, null, null)
-            "下载失败：${e.message ?: "网络异常"}"
+            // 链接可能已经过期：清掉缓存，下次重试重新解析一条新鲜的
+            urlCache.remove(song.songId)
+            val reason = when (e) {
+                is java.io.FileNotFoundException -> "音源拒绝下载（403/404），再点一次重试"
+                else -> e.message ?: "网络异常"
+            }
+            "下载失败：$reason"
         }
     }
 

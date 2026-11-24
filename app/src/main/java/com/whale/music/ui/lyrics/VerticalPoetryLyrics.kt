@@ -63,6 +63,8 @@ fun VerticalPoetryLyrics(
     accent: Color,
     offsetMs: Long,
     scrollHaptic: Boolean,
+    /** 没有控件时点击只唤醒控件，不跳转 */
+    tapToSeek: Boolean = true,
     onSeek: (Long) -> Unit
 ) {
     if (lines.isEmpty()) return
@@ -137,9 +139,11 @@ fun VerticalPoetryLyrics(
                         accent = accent,
                         maxWeight = maxWeight,
                         onClick = {
-                            onSeek((line.timeMs - offsetMs).coerceAtLeast(0L))
-                            lastTouch[0] = android.os.SystemClock.uptimeMillis()
-                            scope.launch { listState.animateScrollToItem(index) }
+                            if (tapToSeek) {
+                                onSeek((line.timeMs - offsetMs).coerceAtLeast(0L))
+                                lastTouch[0] = android.os.SystemClock.uptimeMillis()
+                                scope.launch { listState.animateScrollToItem(index) }
+                            }
                         }
                     )
                 }

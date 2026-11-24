@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
@@ -69,7 +70,11 @@ fun CustomPlaylistDetail(
     menuEnabled: Boolean = true,
     removePrompt: String = "从歌单移除",
     /** 顶栏额外动作（文案 → 回调），虚拟歌单用来放「全部放进歌单」 */
-    extraAction: Pair<String, () -> Unit>? = null
+    extraAction: Pair<String, () -> Unit>? = null,
+    /** 非空时每行末尾显示下载按钮（已在本地的行不显示） */
+    onDownload: ((CustomPlaylistSong) -> Unit)? = null,
+    /** 正在下载的那一行的 songKey，用来把图标换成转圈 */
+    downloadingKey: String? = null
 ) {
     var pendingRemove by remember { mutableStateOf<CustomPlaylistSong?>(null) }
     var showMenu by remember { mutableStateOf(false) }
@@ -215,7 +220,9 @@ fun CustomPlaylistDetail(
                         item = song,
                         isPlaying = isPlaying && playingTitle == song.title,
                         onClick = { onPlayAll(index) },
-                        onMore = { pendingRemove = song }
+                        onMore = { pendingRemove = song },
+                        onDownload = onDownload?.let { cb -> { cb(song) } },
+                        isDownloading = downloadingKey == song.songKey
                     )
                 }
             }
@@ -252,7 +259,9 @@ private fun PlaylistTrackRow(
     item: CustomPlaylistSong,
     isPlaying: Boolean,
     onClick: () -> Unit,
-    onMore: () -> Unit
+    onMore: () -> Unit,
+    onDownload: (() -> Unit)? = null,
+    isDownloading: Boolean = false
 ) {
     val pressSource = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(14.dp)
@@ -325,6 +334,36 @@ private fun PlaylistTrackRow(
             fontSize = 11.sp,
             color = Color.White.copy(alpha = 0.28f)
         )
+        // 下载：只在能下的行出现（本地已有的歌不显示）
+        if (onDownload != null && item.localSongId <= 0L) {
+            Spacer(Modifier.width(8.dp))
+            if (isDownloading) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    color = Color(0xFF7DD3FC),
+                    strokeWidth = 1.6.dp
+                )
+            } else {
+                // 图标本体 19dp，点击热区放大到 32dp，避免点不中
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onDownload() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = "下载",
+                        tint = Color.White.copy(alpha = 0.45f),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+        }
         Spacer(Modifier.width(6.dp))
         Icon(
             Icons.Default.MoreVert,

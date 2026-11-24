@@ -163,6 +163,79 @@ class PlaylistViewModel @Inject constructor(
         }
     }
 
+    // ───────── 歌单里的下载 ─────────
+
+    private val _downloadingKey = MutableStateFlow<String?>(null)
+
+    /** 正在下载的那一行（songKey），用来把行尾图标换成转圈 */
+    val downloadingKey: StateFlow<String?> = _downloadingKey.asStateFlow()
+
+    /**
+     * 歌单 / 「我喜欢的音乐」里下载一首：
+     * 远程行按来源还原成 RemoteSong 再走统一下载通道，本地行直接提示已有。
+     */
+    fun downloadSong(row: CustomPlaylistSong) {
+        if (row.localSongId > 0L) {
+            toast("「${row.title}」已经在本地了")
+            return
+        }
+        val remote = row.toDownloadSource()
+        if (remote == null) {
+            toast("这首没有可下载的音源")
+            return
+        }
+        if (_downloadingKey.value != null) {
+            toast("已有任务在下载，请稍候")
+            return
+        }
+        viewModelScope.launch {
+            _downloadingKey.value = row.songKey
+            val err = remoteController.download(remote)
+            _downloadingKey.value = null
+            if (err == null) {
+                scan()
+                toast("已下载「${row.title}」，在 Music/QLHMusic 里")
+            } else {
+                toast(err)
+            }
+        }
+    }
+
+    /** 行 → 可下载的远程歌曲：网易红心是 ext_ncm_<id>，在线收藏是 remote_<平台>_<id> */
+    private fun CustomPlaylistSong.toDownloadSource(): RemoteSong? {
+        val ncmId = if (songKey.startsWith("ext_ncm_")) {
+            songKey.removePrefix("ext_ncm_").toLongOrNull()
+        } else null
+        if (ncmId != null && ncmId > 0L) {
+            return RemoteSong(
+                songId = "wy_$ncmId",
+                source = "wy",
+                rid = ncmId,
+                title = title,
+                artist = artist,
+                album = album,
+                coverUrl = coverUrl,
+                duration = duration
+            )
+        }
+        val remoteId = remoteSongId.ifBlank { songKey.removePrefix("remote_") }
+        val source = remoteId.substringBefore('_', "")
+        if (source.isBlank() || !remoteId.contains('_')) return null
+        val rid = remoteRid.takeIf { it > 0L }
+            ?: remoteId.substringAfter('_', "").toLongOrNull()
+            ?: return null
+        return RemoteSong(
+            songId = remoteId,
+            source = source,
+            rid = rid,
+            title = title,
+            artist = artist,
+            album = album,
+            coverUrl = coverUrl,
+            duration = duration
+        )
+    }
+
     // ───────── 自建 / 导入歌单 ─────────
 
     /** 展示用的歌单列表：网易云同步歌单已合并进「我喜欢的音乐」，不再单列一张卡 */
