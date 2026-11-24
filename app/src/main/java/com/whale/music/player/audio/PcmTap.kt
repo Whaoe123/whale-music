@@ -14,6 +14,9 @@ import kotlin.math.sqrt
  *
  * 移植自 gxclsl/Sonance（MIT License）playback/PcmTap.kt。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class PcmRing(val capacity: Int) {
 
     private val mask = capacity - 1
@@ -65,6 +68,9 @@ class PcmRing(val capacity: Int) {
  *
  * 不依赖 audio session：直接取自家播放链路上的 PCM。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 object PcmBus {
     val ring = PcmRing(8192)
 
@@ -100,6 +106,9 @@ object PcmBus {
  * 实现上是纯透传 [AudioProcessor]：输入原样交给下游，同时复制一份转单声道
  * float 写进 [PcmBus]。取样器放在 EQ **之后**，可视化读到的是用户实际听到的声音。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class PcmTapProcessor : BaseAudioProcessor() {
 
     /** 预分配的单声道转换区（onConfigure 定尺寸，queueInput 内零分配） */

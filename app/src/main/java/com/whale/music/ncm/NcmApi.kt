@@ -644,16 +644,49 @@ object NcmApi {
     // ───────── 红心回写 ─────────
 
     /** 点赞/取消点赞；返回是否成功 */
+    /**
+     * 红心写入（点喜欢 / 取消喜欢）。
+     *
+     * ## 以前为什么没生效
+     *
+     * 旧实现 POST 的是 `/api/like` —— 实测该路径**根本不存在**：
+     * `{"code":404,"message":"接口未找到！"}`。所以点了爱心只改了本地，
+     * 网易云那边毫无变化（用户看到的就是"没写回"）。
+     *
+     * ## 正确做法
+     *
+     * 网页点红心发的是 `POST /weapi/song/like`（weapi 加密，见 [Weapi]），
+     * 这里优先走它；万一 weapi 被风控，再退回老网页明文接口 `/api/song/like`
+     * （参数 `trackId` + `like` + `csrf_token` + `timestamp`）兜一次。
+     */
     suspend fun like(session: NcmSession, songId: Long, like: Boolean): Boolean {
-        val csrf = session.cookieHeader()
-            .split("; ").firstOrNull { it.startsWith("__csrf=") }
+        val cookie = session.cookieHeader()
+        val csrf = cookie.split(";")
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("__csrf=") }
             ?.substringAfter("=") ?: ""
-        val json = NcmHttp.post(
-            "$BASE/api/like",
-            session.cookieHeader(),
-            "id=$songId&like=$like&csrf=${URLEncoder.encode(csrf, "UTF-8")}",
-            session
-        )
+
+        // ① 网页同款：weapi 加密
+        runCatching {
+            val payload = JSONObject().apply {
+                put("csrf_token", csrf)
+                put("trackId", songId)
+                put("like", like.toString())
+                put("timestamp", System.currentTimeMillis())
+            }.toString()
+            val json = NcmHttp.post("$BASE/weapi/song/like", cookie, Weapi.encrypt(payload), session)
+            if (json.optInt("code") == 200) return true
+            android.util.Log.w("NcmApi", "weapi 红心失败：${json.optInt("code")} ${json.optString("message")}")
+        }
+
+        // ② 老网页明文接口兜底
+        val form = "trackId=$songId&like=$like" +
+            "&csrf_token=${URLEncoder.encode(csrf, "UTF-8")}" +
+            "&timestamp=${System.currentTimeMillis()}"
+        val json = NcmHttp.post("$BASE/api/song/like", cookie, form, session)
+        if (json.optInt("code") != 200) {
+            android.util.Log.w("NcmApi", "红心写入失败：${json.optInt("code")} ${json.optString("message")}")
+        }
         return json.optInt("code") == 200
     }
 

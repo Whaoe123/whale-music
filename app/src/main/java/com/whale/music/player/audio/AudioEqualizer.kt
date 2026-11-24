@@ -76,6 +76,9 @@ const val EQ_MAX_DB = 12f
  * 音频线程 ↔ UI 线程之间的均衡器设置总线。
  * 用 [revision] 单调递增传递「设置变了」：音频线程只在版本号变化时重算一次系数。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 object EqBus {
 
     /** 总开关。「关闭」预设就是 enabled = false，整条滤波链直接旁路，不浪费 CPU */
@@ -115,6 +118,9 @@ object EqBus {
  * 单独抽出以可测：纯 DSP 喂正弦波能量输出即可验证「1kHz 抬 6dB 后能量确实变大」。
  * 无锁：系数与状态只被音频线程读写。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class EqCascade(val bandCount: Int, val channels: Int) {
 
     private val b0 = DoubleArray(bandCount)
@@ -186,6 +192,9 @@ internal class EqCascade(val bandCount: Int, val channels: Int) {
  * 均衡处理器：输入原样交给下游，中间串一串 peaking biquad。
  * 支持 16 / 24 / 32 位整型及 32 位浮点 PCM（16 位输出开启 TPDF 抖动）。
  */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class EqProcessor : BaseAudioProcessor() {
 
     private var sampleRate = 0
@@ -354,6 +363,9 @@ enum class EqPreset(val label: String, val curve: FloatArray) {
 }
 
 /** 与实际 64 位 biquad 同一组系数的频响估计，给 UI 画曲线用 */
+// Media3 的 BaseAudioProcessor / AudioProcessor 全标了 @UnstableApi；
+// 我们用的是官方文档里的标准自定义处理器写法，按官方建议 Opt-in 即可。
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 internal class EqResponse(gainsDb: FloatArray, private val sampleRate: Int) {
     private val coefficients = Array(EQ_BAND_COUNT) { i ->
         val gain = gainsDb.getOrElse(i) { 0f }.let { if (it.isFinite()) it else 0f }
