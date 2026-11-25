@@ -287,7 +287,7 @@ fun PlayerScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color(0xFF0B0C10))
             // 手指抬起后才让控件回来：控件显隐会让歌词区变高变矮，
             // 在手指按着的时候重排会把这一次点击/拖动吃掉（以前要连点两下才生效）
             .pointerInput(Unit) {
@@ -334,15 +334,11 @@ fun PlayerScreen(
                     fallback = painterResource(R.drawable.default_album_art)
                 )
             }
-            // 暗色遮罩（比旧版浅，氛围光才能透出来）
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.26f))
-            )
+            // 舞台追光：多光源 + 带色暗角（端点不用纯黑，避免死黑边）
+            StageGradient(accent = accent)
             // 动态氛围光：两团随封面主色慢移的色斑
             AuroraLayer(accent = accent)
-            // 底部渐变压暗，保证标题 / 控件可读
+            // 底部压深（带主色，不是纯黑），保证标题 / 控件可读
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -350,10 +346,16 @@ fun PlayerScreen(
                     .fillMaxHeight(0.42f)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                            listOf(
+                                Color.Transparent,
+                                androidx.compose.ui.graphics.lerp(accent, Color(0xFF121212), 0.78f)
+                                    .copy(alpha = 0.82f)
+                            )
                         )
                     )
             )
+            // 最后铺 2%~3% 白色噪点：打散大片渐变的色带（Dithering）
+            NoiseOverlay()
         }
 
         // ── 内容层 ──
@@ -1419,8 +1421,8 @@ private fun AuroraLayer(accent: Color) {
                 .background(
                     Brush.radialGradient(
                         listOf(
-                            accent.copy(alpha = 0.50f),
-                            accent.copy(alpha = 0.12f),
+                            androidx.compose.ui.graphics.lerp(accent, Color.White, 0.45f).copy(alpha = 0.34f),
+                            accent.copy(alpha = 0.14f),
                             Color.Transparent
                         )
                     ),

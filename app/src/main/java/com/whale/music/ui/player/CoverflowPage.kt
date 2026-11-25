@@ -255,6 +255,7 @@ fun CoverflowPage(
                     Box(
                         Modifier
                             .matchParentSize()
+                            .rimLight(corner = cornerRadius, strength = if (isCentered) 1.4f else 0.8f)
                             .border(
                                 width = if (isCentered) 0.75.dp else 0.6.dp,
                                 brush = Brush.verticalGradient(
@@ -363,6 +364,8 @@ fun LandscapeLyricsLayout(
                     Modifier
                         .size(132.dp)
                         .clip(RoundedCornerShape(16.dp))
+                        // 边缘高光：暗色背景下把封面卡从背景里“浮”出来
+                        .rimLight(corner = 16.dp)
                         .background(Color(0xFF1A1B1F))
                         .graphicsLayer {
                             shadowElevation = 18f
