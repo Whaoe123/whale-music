@@ -49,6 +49,21 @@ class PlayerViewModel @Inject constructor(
     /** 当前选择；null = 自动（会员无损 / 免费 320k） */
     fun qualityLevel(): NcmLevel? = ncmSession.qualityLevel()
 
+    private val _qualityLevel = kotlinx.coroutines.flow.MutableStateFlow(ncmSession.qualityLevel())
+
+    /** 可订阅的音质档位（横屏底栏的「标准 / 无损」标签用） */
+    val qualityLevelFlow: kotlinx.coroutines.flow.StateFlow<NcmLevel?> = _qualityLevel
+
+    /**
+     * 某首歌自己的封面：远程歌走播放器记下的封面地址，本地歌走专辑图。
+     * 横屏封面墙靠它让每张封面都是那首歌的，而不是全都一样。
+     */
+    fun coverOf(song: Song?): Any? {
+        if (song == null) return null
+        playerManager.coverUrlFor(song.id.toString())?.let { return com.whale.music.util.CoverUrl.hd(it) }
+        return com.whale.music.util.CoverResolver.resolveSong(song.id, song.albumId)
+    }
+
     /** 播放队列快照 + 跳转（播放页「更多」页签） */
     fun queue(): List<com.whale.music.data.model.Song> = playerManager.queueSnapshot()
     fun playAt(index: Int) = playerManager.playAt(index)
@@ -79,6 +94,7 @@ class PlayerViewModel @Inject constructor(
      */
     fun setQualityLevel(level: NcmLevel?) {
         ncmSession.setQualityLevel(level)
+        _qualityLevel.value = level
         remoteController.clearResolvedUrls()
     }
 

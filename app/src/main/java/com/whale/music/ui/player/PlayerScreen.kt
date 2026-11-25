@@ -51,6 +51,8 @@ import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -253,7 +255,7 @@ fun PlayerScreen(
     val autoHideOn by com.whale.music.ui.lyrics.LyricPrefs.autoHideControls.collectAsState()
     var chromeShown by remember { mutableStateOf(true) }
     var lastTouchAt by remember { mutableLongStateOf(0L) }
-    val autoHideNow = autoHideOn && !landscape && pagerState.currentPage == 1 &&
+    val autoHideNow = autoHideOn && (landscape || pagerState.currentPage == 1) &&
         !pagerState.isScrollInProgress &&
         !showLyricSettings && !showFxSheet && !moreMenu && !showAddSheet
     LaunchedEffect(autoHideNow) {
@@ -374,6 +376,19 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+            } else {
+                // 横屏歌词页：同样铺满整屏（画在这里才不会吃到 Column 的边距）
+                AnimatedVisibility(
+                    visible = pagerState.currentPage == 1,
+                    enter = fadeIn(tween(220)),
+                    exit = fadeOut(tween(220)),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    com.whale.music.ui.lyrics.LyricsGlassPanel(
+                        bgBackdrop = bgBackdrop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
             Column(
                 modifier = Modifier
@@ -382,11 +397,12 @@ fun PlayerScreen(
                     .padding(horizontal = if (!landscape && immersive) 20.dp else 32.dp)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(
-                        top = 4.dp,
+                        top = if (landscape) 12.dp else 4.dp,
                         // 横屏：进度/标题/控件收进各页底部簇，只给底部导航胶囊留净空
                         // 竖屏恒定 104：高度差由歌名块/进度条的动画平滑过渡（页宽绝不能变）
                         bottom = if (landscape) {
-                            if (navBarOn) 60.dp else 16.dp
+                            // 横屏底栏贴着屏幕下沿，别在按钮下面留一大片空白
+                            if (navBarOn) 8.dp else 6.dp
                         } else controlsBottomPadding + 104.dp
                     ),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -458,15 +474,22 @@ fun PlayerScreen(
             ) { page ->
                 when {
                     // 横屏封面页：3D Coverflow 封面墙 + 底部簇（进度/歌名/控件，对照 AuraPlayer）
-                    landscape && page == 0 -> Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) {
-                            CoverflowPage(viewModel = viewModel, accent = accent)
-                        }
-                        LandscapeBottomCluster(
+                    landscape && page == 0 -> Box(Modifier.fillMaxSize()) {
+                        CoverflowPage(
                             viewModel = viewModel,
                             accent = accent,
-                            backdrop = bgBackdrop,
-                            songNow = songNow
+                            modifier = Modifier.fillMaxSize(),
+                            // 底栏实际高度（进度条+时间+两排按钮）留足，封面不会压到进度条
+                            bottomInset = 168.dp,
+                            onOpenLyrics = { scope.launch { pagerState.animateScrollToPage(1) } }
+                        )
+                        LandscapeDock(
+                            viewModel = viewModel,
+                            accent = accent,
+                            songNow = songNow,
+                            onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
+                            onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } },
+                            modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
 
@@ -486,6 +509,8 @@ fun PlayerScreen(
                                 accent = accent,
                                 bgProfile = bgProfile,
                                 bgBackdrop = bgBackdrop,
+                                // 横屏：液态玻璃由外层 LandscapeLyricsLayout 铺满整屏
+                                showGlass = false,
                                 tapToSeek = chromeShown,
                                 onSeek = viewModel::seekToMs
                             )
@@ -493,15 +518,17 @@ fun PlayerScreen(
                     )
 
                     // 横屏队列页：队列列表 + 同款底部簇
-                    landscape && page == 2 -> Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) {
+                    landscape && page == 2 -> Box(Modifier.fillMaxSize()) {
+                        Box(Modifier.fillMaxSize().padding(bottom = 132.dp)) {
                             QueuePage(viewModel = viewModel, accent = accent)
                         }
-                        LandscapeBottomCluster(
+                        LandscapeDock(
                             viewModel = viewModel,
                             accent = accent,
-                            backdrop = bgBackdrop,
-                            songNow = songNow
+                            songNow = songNow,
+                            onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
+                            onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } },
+                            modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
 
@@ -616,11 +643,16 @@ fun PlayerScreen(
 
             // 横屏：歌词设置/更多浮到右上角（省掉顶栏 44dp，封面墙更大）
             if (landscape) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = chromeShown,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    enter = fadeIn(tween(220)),
+                    exit = fadeOut(tween(320))
+                ) {
                 Row(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(top = 4.dp, end = 12.dp),
+                        .padding(top = 10.dp, end = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     PlayerTopActions(
@@ -632,6 +664,7 @@ fun PlayerScreen(
                         onGoLyrics = { scope.launch { pagerState.animateScrollToPage(1) } },
                         onGoQueue = { scope.launch { pagerState.animateScrollToPage(2) } }
                     )
+                }
                 }
             }
         } // content wrapper
@@ -796,49 +829,163 @@ private fun PlayerTopActions(
 }
 
 /**
- * 横屏底部簇（对照 AuraPlayer）：进度通栏 + 时间，
- * 下面歌名/歌手靠左、5 键玻璃控件靠右。放在各页内容之下、导航胶囊之上。
+ * 横屏底部停靠栏（对照 AuraPlayer）：
+ * 一条通栏进度条 + 左「歌名/歌手」+ 右「小图标 + 大播放键」，
+ * 全部平铺在背景上，按钮不带任何圆形/模糊底。
  */
 @Composable
-private fun LandscapeBottomCluster(
+private fun LandscapeDock(
     viewModel: PlayerViewModel,
     accent: Color,
-    backdrop: Backdrop,
-    songNow: Song?
+    songNow: Song?,
+    onGoLyrics: () -> Unit,
+    onGoQueue: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val playMode by viewModel.playMode.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
+    val quality by viewModel.qualityLevelFlow.collectAsState()
     val isFavorite by viewModel.isFavorite.collectAsState()
-    val modeLabel = stringResource(
-        when (playMode) {
-            PlayMode.SEQUENCE -> R.string.play_mode_sequence
-            PlayMode.REPEAT_ONE -> R.string.play_mode_repeat_one
-            PlayMode.SHUFFLE -> R.string.play_mode_shuffle
-        }
-    )
-
-    Column(Modifier.fillMaxWidth()) {
-        ProgressArea(viewModel = viewModel, accent = accent)
-        Spacer(Modifier.height(4.dp))
+    val playMode by viewModel.playMode.collectAsState()
+    val qualityText = when (quality) {
+        null -> "自动"
+        com.whale.music.ncm.NcmLevel.STANDARD -> "标准"
+        com.whale.music.ncm.NcmLevel.HIGHER -> "较高"
+        com.whale.music.ncm.NcmLevel.EXHIGH -> "极高"
+        com.whale.music.ncm.NcmLevel.LOSSLESS -> "无损"
+        com.whale.music.ncm.NcmLevel.HIRES -> "Hi-Res"
+    }
+    val srcLabel = when {
+        songNow == null -> null
+        songNow.albumId == PlayerViewModel.REMOTE_WY_ALBUM_ID -> "网易云"
+        songNow.albumId == PlayerViewModel.REMOTE_LX_ALBUM_ID -> "自定义"
+        songNow.albumId == PlayerViewModel.REMOTE_BILI_ALBUM_ID -> "B站"
+        songNow.albumId < 0L -> "酷我"
+        else -> "本地"
+    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 22.dp, end = 22.dp, bottom = 0.dp)
+    ) {
+        GlowProgressBar(
+            value = uiState.progress,
+            accent = accent,
+            modifier = Modifier.fillMaxWidth().height(18.dp),
+            thickness = 5.5.dp,
+            dragThickness = 8.dp,
+            haloSize = 15.dp,
+            onSeek = { viewModel.seekTo(it) },
+            onSeekFinished = { viewModel.seekTo(it) }
+        )
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            SongTextBlock(songNow, Modifier.weight(1f), compact = true)
-            PlaybackGlassControls(
-                backdrop = backdrop,
-                isPlaying = isPlaying,
-                playMode = playMode,
-                modeLabel = modeLabel,
-                isFavorite = isFavorite,
-                onPrevious = viewModel::previous,
-                onTogglePlay = viewModel::togglePlay,
-                onNext = viewModel::next,
-                onToggleMode = viewModel::togglePlayMode,
-                onToggleFavorite = viewModel::toggleFavorite,
-                modifier = Modifier.width(320.dp)
-            )
+            Text(formatTime(uiState.currentPosition), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
+            Text(qualityText, fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
+            Text(formatTime(uiState.duration), fontSize = 12.sp, color = Color.White.copy(alpha = 0.6f))
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = songNow?.title ?: "未在播放",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee()
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = listOfNotNull(
+                        songNow?.artist?.takeIf { it.isNotBlank() },
+                        songNow?.album?.takeIf { it.isNotBlank() },
+                        srcLabel
+                    ).joinToString("  ·  "),
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            // 右侧两排：小图标在上、大播放键在下（对照 AuraPlayer）
+            Column(horizontalAlignment = Alignment.End) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DockIcon(
+                        icon = when (playMode) {
+                            PlayMode.SEQUENCE -> Icons.Default.Repeat
+                            PlayMode.REPEAT_ONE -> Icons.Default.RepeatOne
+                            PlayMode.SHUFFLE -> Icons.Default.Shuffle
+                        },
+                        tint = if (playMode == PlayMode.SEQUENCE) Color.White.copy(alpha = 0.5f)
+                        else Color(0xFF7DD3FC),
+                        onClick = viewModel::togglePlayMode
+                    )
+                    DockIcon(
+                        icon = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        tint = if (isFavorite) Color(0xFFFF5F7E) else Color.White.copy(alpha = 0.5f),
+                        onClick = viewModel::toggleFavorite
+                    )
+                    DockIcon(Icons.Default.MusicNote, Color.White.copy(alpha = 0.5f), onGoLyrics)
+                    DockIcon(Icons.Default.QueueMusic, Color.White.copy(alpha = 0.5f), onGoQueue)
+                }
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DockTransport(Icons.Default.SkipPrevious, 26.dp, viewModel::previous)
+                    DockTransport(
+                        if (uiState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        36.dp,
+                        viewModel::togglePlay
+                    )
+                    DockTransport(Icons.Default.SkipNext, 26.dp, viewModel::next)
+                }
+            }
+        }
+    }
+}
+
+/** 底栏小图标：无圆底、无波纹，只有按压反馈 */
+@Composable
+private fun DockIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** 底栏播放键：只有图标，没有外圈 */
+@Composable
+private fun DockTransport(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconSize: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(iconSize))
     }
 }
 
@@ -1110,7 +1257,9 @@ internal fun PlaybackGlassControls(
     onToggleMode: () -> Unit,
     onToggleFavorite: () -> Unit,
     modifier: Modifier = Modifier,
-    scale: Float = 1f
+    scale: Float = 1f,
+    /** false = 不画按钮外面的半透明圆底（横屏用，图标直接浮在玻璃上） */
+    buttonBackdrop: Boolean = true
 ) {
     val animationScope = rememberCoroutineScope()
 
@@ -1125,7 +1274,7 @@ internal fun PlaybackGlassControls(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 播放模式（顺序 / 单曲 / 随机）
-        GlassButton(40.dp, onToggleMode, animationScope) {
+        GlassButton(40.dp, onToggleMode, animationScope, buttonBackdrop) {
             Icon(
                 imageVector = when (playMode) {
                     PlayMode.SEQUENCE -> Icons.Default.Repeat
@@ -1139,7 +1288,7 @@ internal fun PlaybackGlassControls(
                 modifier = Modifier.size(20.dp)
             )
         }
-        GlassButton(50.dp, onPrevious, animationScope) {
+        GlassButton(50.dp, onPrevious, animationScope, buttonBackdrop) {
             Icon(
                 Icons.Default.SkipPrevious,
                 stringResource(R.string.action_previous),
@@ -1147,14 +1296,14 @@ internal fun PlaybackGlassControls(
                 modifier = Modifier.size(26.dp)
             )
         }
-        GlassButton(78.dp, onTogglePlay, animationScope) {
+        GlassButton(78.dp, onTogglePlay, animationScope, buttonBackdrop) {
             Icon(
                 if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 stringResource(if (isPlaying) R.string.action_pause else R.string.action_play),
                 tint = TextPrimary, modifier = Modifier.size(38.dp)
             )
         }
-        GlassButton(50.dp, onNext, animationScope) {
+        GlassButton(50.dp, onNext, animationScope, buttonBackdrop) {
             Icon(
                 Icons.Default.SkipNext,
                 stringResource(R.string.action_next),
@@ -1163,7 +1312,7 @@ internal fun PlaybackGlassControls(
             )
         }
         // 喜欢
-        GlassButton(40.dp, onToggleFavorite, animationScope) {
+        GlassButton(40.dp, onToggleFavorite, animationScope, buttonBackdrop) {
             Icon(
                 if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                 contentDescription = stringResource(
@@ -1187,6 +1336,7 @@ private fun GlassButton(
     btnSize: Dp,
     onClick: () -> Unit,
     animationScope: CoroutineScope,
+    drawBackdrop: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val highlight = remember(animationScope) { InteractiveHighlight(animationScope = animationScope) }
@@ -1195,9 +1345,13 @@ private fun GlassButton(
     Box(
         modifier = Modifier
             .size(btnSize)
-            .drawBehind {
-                drawCircle(Color.White.copy(alpha = 0.06f + 0.10f * p))
-            }
+            .then(
+                if (drawBackdrop) {
+                    Modifier.drawBehind {
+                        drawCircle(Color.White.copy(alpha = 0.06f + 0.10f * p))
+                    }
+                } else Modifier
+            )
             .graphicsLayer {
                 scaleX = 1f - 0.06f * p
                 scaleY = 1f - 0.06f * p
@@ -1301,18 +1455,24 @@ private fun formatTime(ms: Long): String {
 /** 进度条 + 时间 — 发光胶囊进度条（Capsule Bloom），独立组合避免整页重组（模块 B）
  *  @param compact 歌词页紧凑型：细条 + 小号时间，给沉浸歌词让位 */
 @Composable
-internal fun ProgressArea(viewModel: PlayerViewModel, accent: Color, compact: Boolean = false) {
+internal fun ProgressArea(
+    viewModel: PlayerViewModel,
+    accent: Color,
+    compact: Boolean = false,
+    /** 整体缩放（横屏左栏放大一档用） */
+    sizeScale: Float = 1f
+) {
     val uiState by viewModel.uiState.collectAsState()
     val progress = uiState.progress
     val currentPosition = uiState.currentPosition
     val duration = uiState.duration
 
     // 歌词页紧凑型 ↔ 常规型：全部参数平滑过渡，切换页不跳变
-    val barH by animateDpAsState(if (compact) 18.dp else 28.dp, tween(240), label = "progBarH")
-    val trackTh by animateDpAsState(if (compact) 3.5.dp else 6.5.dp, tween(240), label = "progTrack")
-    val dragTh by animateDpAsState(if (compact) 5.5.dp else 8.5.dp, tween(240), label = "progDragTrack")
-    val haloDp by animateDpAsState(if (compact) 11.dp else 18.5.dp, tween(240), label = "progHalo")
-    val timeSp by animateFloatAsState(if (compact) 10f else 12f, tween(240), label = "progTimeSp")
+    val barH by animateDpAsState((if (compact) 18.dp else 28.dp) * sizeScale, tween(240), label = "progBarH")
+    val trackTh by animateDpAsState((if (compact) 3.5.dp else 6.5.dp) * sizeScale, tween(240), label = "progTrack")
+    val dragTh by animateDpAsState((if (compact) 5.5.dp else 8.5.dp) * sizeScale, tween(240), label = "progDragTrack")
+    val haloDp by animateDpAsState((if (compact) 11.dp else 18.5.dp) * sizeScale, tween(240), label = "progHalo")
+    val timeSp by animateFloatAsState((if (compact) 10f else 12f) * sizeScale, tween(240), label = "progTimeSp")
 
     GlowProgressBar(
         value = progress,
